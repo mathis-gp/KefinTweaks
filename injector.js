@@ -17,36 +17,39 @@
             console.log('[KefinTweaks] Global reset detected. Clearing user configuration.');
 
             // Snapshot watchlist meta before wipe so DateAdded / PlayBaseline can be re-applied
-            const preservedWatchlistMeta = {};
-            const rememberWatchlistMeta = (id, meta) => {
-                if (!id || !meta) return;
-                if (!meta.WatchlistDateAdded && !meta.WatchlistPlayBaseline) return;
-                if (!preservedWatchlistMeta[id]) preservedWatchlistMeta[id] = {};
-                if (meta.WatchlistDateAdded) preservedWatchlistMeta[id].WatchlistDateAdded = meta.WatchlistDateAdded;
-                if (meta.WatchlistPlayBaseline) preservedWatchlistMeta[id].WatchlistPlayBaseline = meta.WatchlistPlayBaseline;
-            };
+			const preservedWatchlistMeta = {};
+			const rememberWatchlistMeta = (id, meta) => {
+				if (!id || !meta) return;
+				if (!meta.WatchlistDateAdded && !meta.WatchlistPlayBaseline) return;
+				if (!preservedWatchlistMeta[id]) preservedWatchlistMeta[id] = {};
+				if (meta.WatchlistDateAdded) preservedWatchlistMeta[id].WatchlistDateAdded = meta.WatchlistDateAdded;
+				if (meta.WatchlistPlayBaseline) preservedWatchlistMeta[id].WatchlistPlayBaseline = meta.WatchlistPlayBaseline;
+			};
 
-            try {
-                const directMeta = JSON.parse(localStorage.getItem('kefinTweaks_watchlist_item_meta') || '{}');
-                Object.keys(directMeta || {}).forEach(id => rememberWatchlistMeta(id, directMeta[id]));
-            } catch (_) {
-                // ignore malformed meta map
-            }
+			try {
+				const directMeta = JSON.parse(localStorage.getItem('kefinTweaks_watchlist_item_meta') || '{}');
+				Object.keys(directMeta || {}).forEach(id => rememberWatchlistMeta(id, directMeta[id]));
+			} catch (_) {
+				// ignore malformed meta map
+			}
 
-            Object.keys(localStorage)
-                .filter(key => key.startsWith('kefinTweaks_watchlist_') && key !== 'kefinTweaks_watchlist_meta_preserve' && key !== 'kefinTweaks_watchlist_item_meta')
-                .forEach(key => {
-                    try {
-                        const parsed = JSON.parse(localStorage.getItem(key));
-                        const payload = parsed && parsed.payload;
-                        if (!Array.isArray(payload)) return;
-                        payload.forEach(item => {
-                            if (item && item.Id) rememberWatchlistMeta(item.Id, item);
-                        });
-                    } catch (_) {
-                        // ignore malformed cache entries
-                    }
-                });
+			Object.keys(localStorage)
+				.filter(key => key.startsWith('kefinTweaks_watchlist_') && key !== 'kefinTweaks_watchlist_meta_preserve' && key !== 'kefinTweaks_watchlist_item_meta')
+				.forEach(key => {
+					try {
+						const parsed = JSON.parse(localStorage.getItem(key));
+						const payload = parsed && parsed.payload;
+						if (Array.isArray(payload)) {
+							payload.forEach(item => {
+								if (item && item.Id) rememberWatchlistMeta(item.Id, item);
+							});
+						} else if (payload && typeof payload === 'object') {
+							Object.keys(payload).forEach(id => rememberWatchlistMeta(id, payload[id]));
+						}
+					} catch (_) {
+						// ignore malformed cache entries
+					}
+				});
 
             Object.keys(localStorage)
                 .filter(key => key.startsWith('kefinTweaks'))

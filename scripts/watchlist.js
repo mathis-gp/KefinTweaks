@@ -2544,6 +2544,7 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 		tabStates.watchlist.isDataFetched = false;
 		
 		try {
+			await ensureWatchlistMetaFromServer();
 			mergePreservedWatchlistMetaIntoStore();
 			if (forceRefresh) {
 				await invalidateAllWatchlistQueries();
@@ -3539,6 +3540,7 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 		const map = readWatchlistItemMetaMap();
 		map[itemId] = { ...(map[itemId] || {}), ...patch };
 		writeWatchlistItemMetaMap(map);
+		scheduleWatchlistMetaServerSync();
 		return map[itemId];
 	}
 
@@ -3548,10 +3550,166 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 		if (!map[itemId]) return;
 		delete map[itemId];
 		writeWatchlistItemMetaMap(map);
+		scheduleWatchlistMetaServerSync();
 	}
 
 	function clearWatchlistItemMeta() {
 		localStorage.removeItem(WATCHLIST_ITEM_META_KEY);
+		scheduleWatchlistMetaServerSync();
+	}
+
+	const WATCHLIST_META_DISPLAY_PREF_KEY = 'kefinTweaksWatchlistMeta';
+	const WATCHLIST_DISPLAY_PREFS_ID = 'usersettings';
+	const WATCHLIST_DISPLAY_PREFS_CLIENT = 'emby';
+
+	let _watchlistMetaFromServerLoaded = false;
+	let _watchlistMetaSyncTimer = null;
+	let _cachedDisplayPreferencesDto = null;
+	let _ensureWatchlistMetaPromise = null;
+
+	function mergeWatchlistMetaMaps(...maps) {
+		const out = {};
+		maps.forEach(map => {
+			if (!map) return;
+			Object.keys(map).forEach(id => {
+				const incoming = map[id];
+				if (!incoming) return;
+				if (!out[id]) out[id] = {};
+				if (incoming.WatchlistDateAdded) {
+					if (!out[id].WatchlistDateAdded || new Date(incoming.WatchlistDateAdded) < new Date(out[id].WatchlistDateAdded)) {
+						out[id].WatchlistDateAdded = incoming.WatchlistDateAdded;
+					}
+				}
+				if (incoming.WatchlistPlayBaseline && !out[id].WatchlistPlayBaseline) {
+					out[id].WatchlistPlayBaseline = incoming.WatchlistPlayBaseline;
+				}
+				if (typeof incoming.WatchlistSortOrder === 'number') {
+					out[id].WatchlistSortOrder = incoming.WatchlistSortOrder;
+				}
+			});
+		});
+		return out;
+	}
+
+	async function fetchDisplayPreferencesDto() {
+		if (_cachedDisplayPreferencesDto) return _cachedDisplayPreferencesDto;
+		const userId = ApiClient.getCurrentUserId();
+		if (!userId) return null;
+
+		if (typeof ApiClient.getDisplayPreferences === 'function') {
+			_cachedDisplayPreferencesDto = await ApiClient.getDisplayPreferences(
+				WATCHLIST_DISPLAY_PREFS_ID,
+				userId,
+				WATCHLIST_DISPLAY_PREFS_CLIENT
+			);
+		} else {
+			const url = ApiClient.getUrl(`DisplayPreferences/${WATCHLIST_DISPLAY_PREFS_ID}`, {
+				userId,
+				client: WATCHLIST_DISPLAY_PREFS_CLIENT
+			});
+			_cachedDisplayPreferencesDto = await ApiClient.getJSON(url);
+		}
+		return _cachedDisplayPreferencesDto;
+	}
+
+	async function fetchWatchlistMetaFromServer() {
+		try {
+			const dto = await fetchDisplayPreferencesDto();
+			if (!dto || !dto.CustomPrefs) return {};
+			const raw = dto.CustomPrefs[WATCHLIST_META_DISPLAY_PREF_KEY];
+			if (!raw) return {};
+			const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+			return parsed && typeof parsed === 'object' ? parsed : {};
+		} catch (err) {
+			WARN('Could not load watchlist meta from DisplayPreferences:', err);
+			return {};
+		}
+	}
+
+	async function saveWatchlistMetaToServer(metaById) {
+		try {
+			const userId = ApiClient.getCurrentUserId();
+			if (!userId) return false;
+
+			_cachedDisplayPreferencesDto = null;
+			const dto = await fetchDisplayPreferencesDto();
+			if (!dto) return false;
+
+			dto.CustomPrefs = dto.CustomPrefs || {};
+			dto.CustomPrefs[WATCHLIST_META_DISPLAY_PREF_KEY] = JSON.stringify(metaById || {});
+
+			if (typeof ApiClient.updateDisplayPreferences === 'function') {
+				await ApiClient.updateDisplayPreferences(
+					WATCHLIST_DISPLAY_PREFS_ID,
+					dto,
+					userId,
+					WATCHLIST_DISPLAY_PREFS_CLIENT
+				);
+			} else {
+				const url = ApiClient.getUrl(`DisplayPreferences/${WATCHLIST_DISPLAY_PREFS_ID}`, {
+					userId,
+					client: WATCHLIST_DISPLAY_PREFS_CLIENT
+				});
+				await ApiClient.ajax({
+					type: 'POST',
+					url,
+					data: JSON.stringify(dto),
+					contentType: 'application/json'
+				});
+			}
+
+			_cachedDisplayPreferencesDto = dto;
+			LOG(`Synced watchlist meta to server (${Object.keys(metaById || {}).length} items)`);
+			return true;
+		} catch (err) {
+			ERR('Could not save watchlist meta to DisplayPreferences:', err);
+			return false;
+		}
+	}
+
+	function scheduleWatchlistMetaServerSync() {
+		if (_watchlistMetaSyncTimer) clearTimeout(_watchlistMetaSyncTimer);
+		_watchlistMetaSyncTimer = setTimeout(() => {
+			_watchlistMetaSyncTimer = null;
+			saveWatchlistMetaToServer(readWatchlistItemMetaMap()).catch(err => {
+				WARN('Debounced watchlist meta sync failed:', err);
+			});
+		}, 750);
+	}
+
+	async function ensureWatchlistMetaFromServer() {
+		if (_watchlistMetaFromServerLoaded) return readWatchlistItemMetaMap();
+		if (_ensureWatchlistMetaPromise) return _ensureWatchlistMetaPromise;
+
+		_ensureWatchlistMetaPromise = (async () => {
+			const serverMeta = await fetchWatchlistMetaFromServer();
+			const localMeta = readWatchlistItemMetaMap();
+			const preserveMeta = getPreservedWatchlistMetaFromStorage();
+			const merged = mergeWatchlistMetaMaps(serverMeta, localMeta, preserveMeta);
+			writeWatchlistItemMetaMap(merged);
+			_watchlistMetaFromServerLoaded = true;
+
+			const serverKeys = Object.keys(serverMeta || {});
+			const mergedKeys = Object.keys(merged);
+			const localHadExtras = mergedKeys.some(id => {
+				const serverItem = serverMeta[id];
+				const mergedItem = merged[id];
+				if (!serverItem) return true;
+				if (mergedItem.WatchlistDateAdded && mergedItem.WatchlistDateAdded !== serverItem.WatchlistDateAdded) return true;
+				if (mergedItem.WatchlistPlayBaseline && !serverItem.WatchlistPlayBaseline) return true;
+				if (typeof mergedItem.WatchlistSortOrder === 'number' && typeof serverItem.WatchlistSortOrder !== 'number') return true;
+				return false;
+			}) || mergedKeys.length > serverKeys.length;
+
+			if (localHadExtras) scheduleWatchlistMetaServerSync();
+			LOG(`Watchlist meta loaded from server/local (${mergedKeys.length} items)`);
+			return merged;
+		})().catch(err => {
+			_ensureWatchlistMetaPromise = null;
+			throw err;
+		});
+
+		return _ensureWatchlistMetaPromise;
 	}
 
 	function recordWatchlistMetaOnAdd(itemId, userData) {
@@ -8319,6 +8477,15 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 		bindWatchlistButton,
 		isSupportedType: isWatchlistSupportedType
 	};
+
+	window.KefinTweaksWatchlistMeta = {
+		ensureFromServer: ensureWatchlistMetaFromServer,
+		getLocalMap: readWatchlistItemMetaMap,
+		scheduleSync: scheduleWatchlistMetaServerSync
+	};
+	ensureWatchlistMetaFromServer().catch(err => {
+		WARN('Initial watchlist meta sync failed:', err);
+	});
 
 	/************ Item Detail Page Observer ************/
 

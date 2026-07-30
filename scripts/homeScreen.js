@@ -2438,12 +2438,25 @@
     }
 
     /**
-     * Reads WatchlistDateAdded from the watchlist localStorage sections
-     * (populated by watchlist.js when items are added)
+     * Reads WatchlistDateAdded from meta map / section caches / preserve stash
+     * (meta map is synced via DisplayPreferences by watchlist.js)
      * @returns {Object} - Map of itemId -> WatchlistDateAdded ISO string
      */
     function getWatchlistDateAddedMap() {
         const metaById = {};
+
+        const takeDate = (id, dateAdded) => {
+            if (!id || !dateAdded) return;
+            if (!metaById[id] || new Date(dateAdded) < new Date(metaById[id])) {
+                metaById[id] = dateAdded;
+            }
+        };
+
+        // Dedicated meta map (local mirror of DisplayPreferences CustomPrefs)
+        if (window.KefinTweaksWatchlistMeta && typeof window.KefinTweaksWatchlistMeta.getLocalMap === 'function') {
+            const map = window.KefinTweaksWatchlistMeta.getLocalMap() || {};
+            Object.keys(map).forEach(id => takeDate(id, map[id] && map[id].WatchlistDateAdded));
+        }
 
         // Post-reset preserve (written by injector before cache wipe)
         try {
@@ -2452,9 +2465,7 @@
                 const parsed = JSON.parse(raw);
                 const payload = (parsed && parsed.payload) || {};
                 Object.keys(payload).forEach(id => {
-                    if (payload[id] && payload[id].WatchlistDateAdded) {
-                        metaById[id] = payload[id].WatchlistDateAdded;
-                    }
+                    takeDate(id, payload[id] && payload[id].WatchlistDateAdded);
                 });
             }
         } catch (_) {
@@ -2482,6 +2493,21 @@
         const cache = new window.LocalStorageCache();
         const userId = window.ApiClient?.getCurrentUserId?.() || null;
 
+        // Fallback: read meta map directly from localStorage if API not ready
+        try {
+            let itemMeta = cache.get('watchlist_item_meta', userId);
+            if (!itemMeta) {
+                const key = cache.getCacheKey('watchlist_item_meta', userId);
+                const raw = localStorage.getItem(key);
+                if (raw) itemMeta = JSON.parse(raw).payload;
+            }
+            if (itemMeta && typeof itemMeta === 'object' && !Array.isArray(itemMeta)) {
+                Object.keys(itemMeta).forEach(id => takeDate(id, itemMeta[id] && itemMeta[id].WatchlistDateAdded));
+            }
+        } catch (_) {
+            // ignore
+        }
+
         ['movies', 'series', 'seasons', 'episodes'].forEach(section => {
             let cached = cache.get(`watchlist_${section}`, userId);
 
@@ -2501,9 +2527,7 @@
             if (!Array.isArray(cached)) return;
 
             cached.forEach(item => {
-                if (item && item.Id && item.WatchlistDateAdded) {
-                    metaById[item.Id] = item.WatchlistDateAdded;
-                }
+                if (item && item.Id) takeDate(item.Id, item.WatchlistDateAdded);
             });
         });
         return metaById;
@@ -2515,6 +2539,15 @@
      * @returns {Array} - Combined watchlist items
      */
     async function getWatchlistData(mediaTypes = 'all') {
+        // Pull cross-client meta from DisplayPreferences before attaching dates
+        if (window.KefinTweaksWatchlistMeta && typeof window.KefinTweaksWatchlistMeta.ensureFromServer === 'function') {
+            try {
+                await window.KefinTweaksWatchlistMeta.ensureFromServer();
+            } catch (_) {
+                // local map / section caches still usable
+            }
+        }
+
         const watchlistData = await window.apiHelper.getWatchlistItems({ IncludeItemTypes: 'Movie,Series,Season,Episode' }, true);
         const items = filterWatchlistByMediaTypes(watchlistData.Items || [], mediaTypes);
         const dateAddedById = getWatchlistDateAddedMap();
