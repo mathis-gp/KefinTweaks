@@ -67,16 +67,27 @@ window.KefinTweaksDefaultConfig = {
       "sortOrder": "Random",
       "sortOrderDirection": "Ascending",
       "cardFormat": "Poster",
-      "order": 61
+      "order": 62
     },
     "watchlist": {
-      "name": "Watchlist",
-      "enabled": true,
-      "itemLimit": 16,
-      "sortOrder": "DateAdded",
-      "sortOrderDirection": "Descending",
-      "cardFormat": "Poster",
-      "order": 60
+      "movies": {
+        "name": "Watchlist - Movies",
+        "enabled": true,
+        "itemLimit": 16,
+        "sortOrder": "DateAdded",
+        "sortOrderDirection": "Ascending",
+        "cardFormat": "Poster",
+        "order": 60
+      },
+      "shows": {
+        "name": "Watchlist - Shows",
+        "enabled": true,
+        "itemLimit": 16,
+        "sortOrder": "DateAdded",
+        "sortOrderDirection": "Ascending",
+        "cardFormat": "Poster",
+        "order": 61
+      }
     },
     "watchAgain": {
       "name": "Watch Again",
@@ -85,7 +96,7 @@ window.KefinTweaksDefaultConfig = {
       "sortOrder": "Random",
       "sortOrderDirection": "Ascending",
       "cardFormat": "Poster",
-      "order": 62
+      "order": 63
     },
     "upcoming": {
       "name": "Upcoming",

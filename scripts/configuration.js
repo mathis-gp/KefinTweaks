@@ -1483,7 +1483,8 @@
             includeCardFormat = true,
             includeItemLimit = true,
             includeIsPlayed = false,
-            includePremiereDays = false
+            includePremiereDays = false,
+            includeMediaTypes = false
         } = options;
 
         const nameValue = config.name ?? defaultName ?? '';
@@ -1492,6 +1493,7 @@
         const sortOrderDirection = config.sortOrderDirection ?? 'Ascending';
         const cardFormat = config.cardFormat ?? options.defaultCardFormat ?? 'Poster';
         const order = config.order ?? options.defaultOrder ?? 100;
+        const mediaTypes = config.mediaTypes || 'all';
         
         // IsPlayed logic
         // If isPlayed is undefined or null, it means the filter is disabled.
@@ -1511,6 +1513,20 @@
                 <div class="listItemContent">
                     <div class="listItemBodyText" style="margin-bottom: 0.5em;">${nameLabel}</div>
                     <input type="text" ${attributesToString(nameAttrs)} value="${nameValue}" placeholder="${defaultName || ''}" style="width: 100%; max-width: 250px;">
+                </div>
+            </div>`;
+        }
+
+        if (includeMediaTypes) {
+            html += `
+            <div class="listItem" style="border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; padding: 0.75em;">
+                <div class="listItemContent">
+                    <div class="listItemBodyText" style="margin-bottom: 0.5em;">Media Types</div>
+                    <select id="${prefix}_mediaTypes" class="fld emby-select-withcolor emby-select" style="width: 100%; max-width: 200px;">
+                        <option value="all" ${mediaTypes === 'all' ? 'selected' : ''}>Movies & Shows</option>
+                        <option value="movies" ${mediaTypes === 'movies' ? 'selected' : ''}>Movies</option>
+                        <option value="shows" ${mediaTypes === 'shows' ? 'selected' : ''}>Shows</option>
+                    </select>
                 </div>
             </div>`;
         }
@@ -1644,6 +1660,30 @@
         const trending = homeScreen.trending || {};
         const popularTVNetworks = homeScreen.popularTVNetworks || {};
         const watchlist = homeScreen.watchlist || {};
+        const watchlistMovies = watchlist.movies || (watchlist.enabled !== undefined || watchlist.sortOrder || watchlist.mediaTypes
+            ? {
+                // Legacy flat watchlist → movies section
+                enabled: !!watchlist.enabled && watchlist.mediaTypes !== 'shows',
+                name: 'Watchlist - Movies',
+                itemLimit: watchlist.itemLimit ?? 16,
+                sortOrder: watchlist.sortOrder ?? 'DateAdded',
+                sortOrderDirection: watchlist.sortOrderDirection ?? 'Ascending',
+                cardFormat: watchlist.cardFormat ?? 'Poster',
+                order: watchlist.order ?? 60
+            }
+            : {});
+        const watchlistShows = watchlist.shows || (watchlist.enabled !== undefined || watchlist.sortOrder || watchlist.mediaTypes
+            ? {
+                // Legacy flat watchlist → shows section
+                enabled: !!watchlist.enabled && watchlist.mediaTypes !== 'movies',
+                name: 'Watchlist - Shows',
+                itemLimit: watchlist.itemLimit ?? 16,
+                sortOrder: watchlist.sortOrder ?? 'DateAdded',
+                sortOrderDirection: watchlist.sortOrderDirection ?? 'Ascending',
+                cardFormat: watchlist.cardFormat ?? 'Poster',
+                order: (watchlist.order ?? 60) + 1
+            }
+            : {});
         const upcoming = homeScreen.upcoming || {};
         const imdbTop250 = homeScreen.imdbTop250 || {};
         const seasonal = homeScreen.seasonal || {};
@@ -1885,16 +1925,49 @@
                 </div>
             </details>
             
-            <!-- Watchlist -->
+            <!-- Watchlist Sections -->
             <details style="border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; padding: 0.75em; margin-bottom: 1em;">
                 <summary class="listItemBodyText" style="font-weight: 500; cursor: pointer; margin-bottom: 0.5em; display: flex; align-items: center; gap: 0.5em; border-radius: 0px !important;">
-                    ${buildJellyfinCheckbox('homeScreen_watchlist_enabled', watchlist.enabled === true, 'Watchlist')}
-                    <span class="listItemBodyText secondary" style="font-size: 0.9em; font-weight: normal; margin-left: auto;">(Order: <span class="home-section-order" data-prefix="homeScreen_watchlist">${watchlist.order || 100}</span>)</span>
+                    <span class="material-icons" style="font-size: 1.2em; transition: transform 0.2s;">chevron_right</span>
+                    Watchlist Sections
                 </summary>
                 <div style="padding: 0.75em 0 0 0;">
                     <div id="homeScreen_watchlist_container">
-                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 0.75em;">
-                            ${createSectionConfiguration('homeScreen_watchlist', watchlist, { includeName: true, defaultName: 'Watchlist' })}
+                        <div style="display: grid; grid-template-columns: 1fr; gap: 0.75em; margin-bottom: 0.75em;">
+                            <details class="listItem" style="display: grid; border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; padding: 0; gap: 0.5em;">
+                                <summary class="watchlist-subsection-summary" style="display: flex; justify-content: space-between; align-items: center; padding: 0.75em; cursor: pointer; list-style: none; user-select: none;">
+                                    <div class="listItemBodyText" style="font-weight: 500; display: flex; align-items: center; gap: 0.5em;">
+                                        <span class="material-icons" style="font-size: 1.2em; transition: transform 0.2s;">chevron_right</span>
+                                        <span>Watchlist - Movies</span>
+                                        <span class="listItemBodyText secondary" style="font-size: 0.9em; font-weight: normal;">(<span class="watchlist-movies-enabled">${watchlistMovies.enabled === true ? 'Enabled' : 'Disabled'}</span>, Order: <span class="home-section-order" data-prefix="homeScreen_watchlist_movies">${watchlistMovies.order ?? 60}</span>)</span>
+                                    </div>
+                                </summary>
+                                <div style="padding: 0 0.75em 0.75em 0.75em; border-top: 1px solid rgba(255,255,255,0.1);">
+                                    <div style="margin-top: 0.75em; margin-bottom: 0.75em;">
+                                        ${buildJellyfinCheckbox('homeScreen_watchlist_movies_enabled', watchlistMovies.enabled === true, 'Enabled')}
+                                    </div>
+                                    <div class="listItemContent" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 0.75em;">
+                                        ${createSectionConfiguration('homeScreen_watchlist_movies', watchlistMovies, { includeName: true, defaultName: 'Watchlist - Movies', defaultOrder: 60 })}
+                                    </div>
+                                </div>
+                            </details>
+                            <details class="listItem" style="display: grid; border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; padding: 0; gap: 0.5em;">
+                                <summary class="watchlist-subsection-summary" style="display: flex; justify-content: space-between; align-items: center; padding: 0.75em; cursor: pointer; list-style: none; user-select: none;">
+                                    <div class="listItemBodyText" style="font-weight: 500; display: flex; align-items: center; gap: 0.5em;">
+                                        <span class="material-icons" style="font-size: 1.2em; transition: transform 0.2s;">chevron_right</span>
+                                        <span>Watchlist - Shows</span>
+                                        <span class="listItemBodyText secondary" style="font-size: 0.9em; font-weight: normal;">(<span class="watchlist-shows-enabled">${watchlistShows.enabled === true ? 'Enabled' : 'Disabled'}</span>, Order: <span class="home-section-order" data-prefix="homeScreen_watchlist_shows">${watchlistShows.order ?? 61}</span>)</span>
+                                    </div>
+                                </summary>
+                                <div style="padding: 0 0.75em 0.75em 0.75em; border-top: 1px solid rgba(255,255,255,0.1);">
+                                    <div style="margin-top: 0.75em; margin-bottom: 0.75em;">
+                                        ${buildJellyfinCheckbox('homeScreen_watchlist_shows_enabled', watchlistShows.enabled === true, 'Enabled')}
+                                    </div>
+                                    <div class="listItemContent" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 0.75em;">
+                                        ${createSectionConfiguration('homeScreen_watchlist_shows', watchlistShows, { includeName: true, defaultName: 'Watchlist - Shows', defaultOrder: 61 })}
+                                    </div>
+                                </div>
+                            </details>
                         </div>
                     </div>
                 </div>
@@ -2348,7 +2421,8 @@
         setupCheckboxPropagation('#homeScreen_recentlyReleased_enabled');
         setupCheckboxPropagation('#homeScreen_trending_enabled');
         setupCheckboxPropagation('#homeScreen_popularTVNetworks_enabled');
-        setupCheckboxPropagation('#homeScreen_watchlist_enabled');
+        setupCheckboxPropagation('#homeScreen_watchlist_movies_enabled');
+        setupCheckboxPropagation('#homeScreen_watchlist_shows_enabled');
         setupCheckboxPropagation('#homeScreen_upcoming_enabled');
         setupCheckboxPropagation('#homeScreen_imdbTop250_enabled');
         setupCheckboxPropagation('#homeScreen_seasonal_enabled');
@@ -2484,6 +2558,9 @@
             
             // Setup order update listeners for recently released subsections
             setupRecentlyReleasedOrderListeners();
+
+            // Setup enabled status listeners for watchlist subsections
+            setupWatchlistSubsectionListeners();
             
             // Setup order update listeners for seasonal seasons
             setupSeasonalSeasonOrderListeners();
@@ -2543,6 +2620,24 @@
             if (episodesEnabledSpan && episodesEnabledCheckbox) {
                 episodesEnabledCheckbox.addEventListener('change', () => {
                     episodesEnabledSpan.textContent = episodesEnabledCheckbox.checked ? 'Enabled' : 'Disabled';
+                });
+            }
+        }
+
+        function setupWatchlistSubsectionListeners() {
+            const moviesEnabledSpan = modalInstance.dialogContent.querySelector('.watchlist-movies-enabled');
+            const moviesEnabledCheckbox = modalInstance.dialogContent.querySelector('#homeScreen_watchlist_movies_enabled');
+            if (moviesEnabledSpan && moviesEnabledCheckbox) {
+                moviesEnabledCheckbox.addEventListener('change', () => {
+                    moviesEnabledSpan.textContent = moviesEnabledCheckbox.checked ? 'Enabled' : 'Disabled';
+                });
+            }
+
+            const showsEnabledSpan = modalInstance.dialogContent.querySelector('.watchlist-shows-enabled');
+            const showsEnabledCheckbox = modalInstance.dialogContent.querySelector('#homeScreen_watchlist_shows_enabled');
+            if (showsEnabledSpan && showsEnabledCheckbox) {
+                showsEnabledCheckbox.addEventListener('change', () => {
+                    showsEnabledSpan.textContent = showsEnabledCheckbox.checked ? 'Enabled' : 'Disabled';
                 });
             }
         }
@@ -5059,6 +5154,11 @@
 
             config.cardFormat = document.getElementById(`${prefix}_cardFormat`)?.value || 'Poster';
 
+            const mediaTypesSelect = document.getElementById(`${prefix}_mediaTypes`);
+            if (mediaTypesSelect) {
+                config.mediaTypes = mediaTypesSelect.value || 'all';
+            }
+
             if (includeOrder) {
                 config.order = parseInt(document.getElementById(`${prefix}_order`)?.value || '100', 10);
             }
@@ -5200,8 +5300,14 @@
                 ...getSectionConfig('homeScreen_popularTVNetworks', { includeName: true, defaultName: 'Popular TV Networks' })
             },
             watchlist: {
-                enabled: document.getElementById('homeScreen_watchlist_enabled')?.checked === true,
-                ...getSectionConfig('homeScreen_watchlist', { includeName: true, defaultName: 'Watchlist' })
+                movies: {
+                    enabled: document.getElementById('homeScreen_watchlist_movies_enabled')?.checked === true,
+                    ...getSectionConfig('homeScreen_watchlist_movies', { includeName: true, defaultName: 'Watchlist - Movies' })
+                },
+                shows: {
+                    enabled: document.getElementById('homeScreen_watchlist_shows_enabled')?.checked === true,
+                    ...getSectionConfig('homeScreen_watchlist_shows', { includeName: true, defaultName: 'Watchlist - Shows' })
+                }
             },
             watchAgain: {
                 enabled: document.getElementById('homeScreen_watchAgain_enabled')?.checked === true,
