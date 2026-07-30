@@ -19,24 +19,32 @@
             // Snapshot watchlist meta before wipe so DateAdded / PlayBaseline can be re-applied
             // when the watchlist cache is rebuilt after reset
             const preservedWatchlistMeta = {};
+            const mergePreservedItem = (id, item) => {
+                if (!id || !item) return;
+                if (!item.WatchlistDateAdded && !item.WatchlistPlayBaseline) return;
+                if (!preservedWatchlistMeta[id]) preservedWatchlistMeta[id] = {};
+                if (item.WatchlistDateAdded) {
+                    preservedWatchlistMeta[id].WatchlistDateAdded = item.WatchlistDateAdded;
+                }
+                if (item.WatchlistPlayBaseline) {
+                    preservedWatchlistMeta[id].WatchlistPlayBaseline = item.WatchlistPlayBaseline;
+                }
+            };
+
             Object.keys(localStorage)
                 .filter(key => key.startsWith('kefinTweaks_watchlist_') && key !== 'kefinTweaks_watchlist_meta_preserve')
                 .forEach(key => {
                     try {
                         const parsed = JSON.parse(localStorage.getItem(key));
                         const payload = parsed && parsed.payload;
-                        if (!Array.isArray(payload)) return;
-                        payload.forEach(item => {
-                            if (!item || !item.Id) return;
-                            if (!item.WatchlistDateAdded && !item.WatchlistPlayBaseline) return;
-                            if (!preservedWatchlistMeta[item.Id]) preservedWatchlistMeta[item.Id] = {};
-                            if (item.WatchlistDateAdded) {
-                                preservedWatchlistMeta[item.Id].WatchlistDateAdded = item.WatchlistDateAdded;
-                            }
-                            if (item.WatchlistPlayBaseline) {
-                                preservedWatchlistMeta[item.Id].WatchlistPlayBaseline = item.WatchlistPlayBaseline;
-                            }
-                        });
+                        if (Array.isArray(payload)) {
+                            payload.forEach(item => {
+                                if (item && item.Id) mergePreservedItem(item.Id, item);
+                            });
+                        } else if (payload && typeof payload === 'object') {
+                            // Dedicated meta map: { [itemId]: { WatchlistDateAdded, WatchlistPlayBaseline } }
+                            Object.keys(payload).forEach(id => mergePreservedItem(id, payload[id]));
+                        }
                     } catch (_) {
                         // ignore malformed cache entries
                     }

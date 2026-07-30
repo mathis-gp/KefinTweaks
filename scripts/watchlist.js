@@ -2609,7 +2609,8 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 		renderWatchlistContent();
 		
 		try {
-			// Preserve custom props across API refresh
+			// Load cross-client meta from DisplayPreferences, then merge with local/preserve
+			await ensureWatchlistMetaFromServer();
 			const preservedMeta = options.preservedMeta || collectWatchlistMetaById();
 
 			// Fetch watchlist data
@@ -2635,7 +2636,9 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 				initWatchlistSection('playlists', 'Playlist')
 			]);
 
-			// Meta from post-reset preserve has been written back into section caches
+			// Persist merged meta locally + sync to server; drop one-shot preserve stash
+			persistLocalWatchlistItemMetaMap(collectWatchlistMetaById());
+			scheduleWatchlistMetaServerSync();
 			clearPreservedWatchlistMetaFromStorage();
 			
 			tabStates.watchlist.isDataFetched = true;
@@ -4863,9 +4866,17 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 	}
 
 	const WATCHLIST_META_SECTIONS = ['movies', 'series', 'seasons', 'episodes'];
-
-	// Find a watchlisted item in the in-memory cache
 	const WATCHLIST_META_PRESERVE_KEY = 'kefinTweaks_watchlist_meta_preserve';
+	const WATCHLIST_ITEM_META_CACHE = 'watchlist_item_meta';
+	const WATCHLIST_ITEM_META_TTL = 365 * 24 * 60 * 60 * 1000; // 1 year
+	const WATCHLIST_META_DISPLAY_PREF_KEY = 'kefinTweaksWatchlistMeta';
+	const WATCHLIST_DISPLAY_PREFS_ID = 'usersettings';
+	const WATCHLIST_DISPLAY_PREFS_CLIENT = 'emby';
+
+	let _watchlistMetaFromServerLoaded = false;
+	let _watchlistMetaSyncTimer = null;
+	let _cachedDisplayPreferencesDto = null;
+	let _ensureWatchlistMetaPromise = null;
 
 	function getPreservedWatchlistMetaFromStorage() {
 		try {
@@ -4882,6 +4893,207 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 		localStorage.removeItem(WATCHLIST_META_PRESERVE_KEY);
 	}
 
+	function getLocalWatchlistItemMetaMap() {
+		let map = localStorageCache.get(WATCHLIST_ITEM_META_CACHE);
+		if (map && typeof map === 'object') return map;
+
+		// TTL expired: still read payload so meta survives until server refresh
+		try {
+			const key = localStorageCache.getCacheKey(WATCHLIST_ITEM_META_CACHE);
+			const raw = localStorage.getItem(key);
+			if (raw) {
+				const parsed = JSON.parse(raw);
+				if (parsed && parsed.payload && typeof parsed.payload === 'object' && !Array.isArray(parsed.payload)) {
+					return parsed.payload;
+				}
+			}
+		} catch (_) {
+			// ignore
+		}
+		return {};
+	}
+
+	function persistLocalWatchlistItemMetaMap(metaById) {
+		localStorageCache.set(
+			WATCHLIST_ITEM_META_CACHE,
+			metaById || {},
+			ApiClient.getCurrentUserId?.() || ApiClient._currentUser?.Id || null,
+			WATCHLIST_ITEM_META_TTL
+		);
+	}
+
+	function mergeWatchlistMetaMaps(...maps) {
+		const out = {};
+		maps.forEach(map => {
+			if (!map) return;
+			Object.keys(map).forEach(id => {
+				const incoming = map[id];
+				if (!incoming) return;
+				if (!out[id]) out[id] = {};
+
+				if (incoming.WatchlistDateAdded) {
+					if (!out[id].WatchlistDateAdded) {
+						out[id].WatchlistDateAdded = incoming.WatchlistDateAdded;
+					} else if (new Date(incoming.WatchlistDateAdded) < new Date(out[id].WatchlistDateAdded)) {
+						// Keep earliest add date across clients
+						out[id].WatchlistDateAdded = incoming.WatchlistDateAdded;
+					}
+				}
+
+				if (incoming.WatchlistPlayBaseline && !out[id].WatchlistPlayBaseline) {
+					out[id].WatchlistPlayBaseline = incoming.WatchlistPlayBaseline;
+				}
+			});
+		});
+		return out;
+	}
+
+	async function fetchDisplayPreferencesDto() {
+		if (_cachedDisplayPreferencesDto) return _cachedDisplayPreferencesDto;
+		const userId = ApiClient.getCurrentUserId();
+		if (!userId) return null;
+
+		if (typeof ApiClient.getDisplayPreferences === 'function') {
+			_cachedDisplayPreferencesDto = await ApiClient.getDisplayPreferences(
+				WATCHLIST_DISPLAY_PREFS_ID,
+				userId,
+				WATCHLIST_DISPLAY_PREFS_CLIENT
+			);
+		} else {
+			const url = ApiClient.getUrl(`DisplayPreferences/${WATCHLIST_DISPLAY_PREFS_ID}`, {
+				userId,
+				client: WATCHLIST_DISPLAY_PREFS_CLIENT
+			});
+			_cachedDisplayPreferencesDto = await ApiClient.getJSON(url);
+		}
+		return _cachedDisplayPreferencesDto;
+	}
+
+	async function fetchWatchlistMetaFromServer() {
+		try {
+			const dto = await fetchDisplayPreferencesDto();
+			if (!dto || !dto.CustomPrefs) return {};
+			const raw = dto.CustomPrefs[WATCHLIST_META_DISPLAY_PREF_KEY];
+			if (!raw) return {};
+			const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+			return parsed && typeof parsed === 'object' ? parsed : {};
+		} catch (err) {
+			WARN('Could not load watchlist meta from DisplayPreferences:', err);
+			return {};
+		}
+	}
+
+	async function saveWatchlistMetaToServer(metaById) {
+		try {
+			const userId = ApiClient.getCurrentUserId();
+			if (!userId) return false;
+
+			// Always re-fetch before save so we don't wipe unrelated CustomPrefs
+			_cachedDisplayPreferencesDto = null;
+			const dto = await fetchDisplayPreferencesDto();
+			if (!dto) return false;
+
+			dto.CustomPrefs = dto.CustomPrefs || {};
+			dto.CustomPrefs[WATCHLIST_META_DISPLAY_PREF_KEY] = JSON.stringify(metaById || {});
+
+			if (typeof ApiClient.updateDisplayPreferences === 'function') {
+				await ApiClient.updateDisplayPreferences(
+					WATCHLIST_DISPLAY_PREFS_ID,
+					dto,
+					userId,
+					WATCHLIST_DISPLAY_PREFS_CLIENT
+				);
+			} else {
+				const url = ApiClient.getUrl(`DisplayPreferences/${WATCHLIST_DISPLAY_PREFS_ID}`, {
+					userId,
+					client: WATCHLIST_DISPLAY_PREFS_CLIENT
+				});
+				await ApiClient.ajax({
+					type: 'POST',
+					url,
+					data: JSON.stringify(dto),
+					contentType: 'application/json'
+				});
+			}
+
+			_cachedDisplayPreferencesDto = dto;
+			LOG(`Synced watchlist meta to server (${Object.keys(metaById || {}).length} items)`);
+			return true;
+		} catch (err) {
+			ERR('Could not save watchlist meta to DisplayPreferences:', err);
+			return false;
+		}
+	}
+
+	function scheduleWatchlistMetaServerSync() {
+		if (_watchlistMetaSyncTimer) {
+			clearTimeout(_watchlistMetaSyncTimer);
+		}
+		_watchlistMetaSyncTimer = setTimeout(() => {
+			_watchlistMetaSyncTimer = null;
+			const meta = getLocalWatchlistItemMetaMap();
+			saveWatchlistMetaToServer(meta).catch(err => {
+				WARN('Debounced watchlist meta sync failed:', err);
+			});
+		}, 750);
+	}
+
+	async function ensureWatchlistMetaFromServer() {
+		if (_watchlistMetaFromServerLoaded) return getLocalWatchlistItemMetaMap();
+		if (_ensureWatchlistMetaPromise) return _ensureWatchlistMetaPromise;
+
+		_ensureWatchlistMetaPromise = (async () => {
+			const serverMeta = await fetchWatchlistMetaFromServer();
+			const localMeta = getLocalWatchlistItemMetaMap();
+			const preserveMeta = getPreservedWatchlistMetaFromStorage();
+			const merged = mergeWatchlistMetaMaps(serverMeta, localMeta, preserveMeta);
+
+			persistLocalWatchlistItemMetaMap(merged);
+			_watchlistMetaFromServerLoaded = true;
+
+			// Push merge upstream if local/preserve had data server lacked
+			const serverKeys = Object.keys(serverMeta || {});
+			const mergedKeys = Object.keys(merged);
+			const localHadExtras = mergedKeys.some(id => {
+				const s = serverMeta[id];
+				const m = merged[id];
+				if (!s) return true;
+				if (m.WatchlistDateAdded && m.WatchlistDateAdded !== s.WatchlistDateAdded) return true;
+				if (m.WatchlistPlayBaseline && !s.WatchlistPlayBaseline) return true;
+				return false;
+			}) || mergedKeys.length > serverKeys.length;
+
+			if (localHadExtras) {
+				scheduleWatchlistMetaServerSync();
+			}
+
+			LOG(`Watchlist meta loaded from server/local (${mergedKeys.length} items)`);
+			return merged;
+		})().catch(err => {
+			_ensureWatchlistMetaPromise = null;
+			throw err;
+		});
+
+		return _ensureWatchlistMetaPromise;
+	}
+
+	function upsertWatchlistItemMeta(itemId, meta) {
+		if (!itemId || !meta) return;
+		const map = getLocalWatchlistItemMetaMap();
+		map[itemId] = mergeWatchlistMetaMaps({ [itemId]: map[itemId] || {} }, { [itemId]: meta })[itemId];
+		persistLocalWatchlistItemMetaMap(map);
+		scheduleWatchlistMetaServerSync();
+	}
+
+	function removeWatchlistItemMeta(itemId) {
+		if (!itemId) return;
+		const map = getLocalWatchlistItemMetaMap();
+		if (!(itemId in map)) return;
+		delete map[itemId];
+		persistLocalWatchlistItemMetaMap(map);
+		scheduleWatchlistMetaServerSync();
+	}
+
 	function findWatchlistCachedItem(itemId) {
 		if (!itemId) return null;
 		for (const section of WATCHLIST_META_SECTIONS) {
@@ -4891,7 +5103,7 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 		return null;
 	}
 
-	// Collect WatchlistDateAdded / WatchlistPlayBaseline from memory + localStorage (+ post-reset preserve)
+	// Collect WatchlistDateAdded / WatchlistPlayBaseline from memory + localStorage + server mirror
 	function collectWatchlistMetaById() {
 		const metaById = {};
 
@@ -4912,8 +5124,11 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 				const meta = map[id];
 				if (!meta) return;
 				if (!metaById[id]) metaById[id] = {};
-				if (meta.WatchlistDateAdded && !metaById[id].WatchlistDateAdded) {
-					metaById[id].WatchlistDateAdded = meta.WatchlistDateAdded;
+				if (meta.WatchlistDateAdded) {
+					if (!metaById[id].WatchlistDateAdded ||
+						new Date(meta.WatchlistDateAdded) < new Date(metaById[id].WatchlistDateAdded)) {
+						metaById[id].WatchlistDateAdded = meta.WatchlistDateAdded;
+					}
 				}
 				if (meta.WatchlistPlayBaseline && !metaById[id].WatchlistPlayBaseline) {
 					metaById[id].WatchlistPlayBaseline = meta.WatchlistPlayBaseline;
@@ -4921,10 +5136,12 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 			});
 		};
 
+		mergeMetaMap(getLocalWatchlistItemMetaMap());
+		mergeMetaMap(getPreservedWatchlistMetaFromStorage());
+
 		for (const section of WATCHLIST_META_SECTIONS) {
 			(watchlistCache[section]?.data || []).forEach(mergeItem);
 
-			// Prefer valid cache, then raw/expired payload
 			let cached = localStorageCache.get(`watchlist_${section}`);
 			if (!cached) {
 				try {
@@ -4937,9 +5154,6 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 			}
 			if (Array.isArray(cached)) cached.forEach(mergeItem);
 		}
-
-		// Meta saved by injector.js just before a configVersion cache wipe
-		mergeMetaMap(getPreservedWatchlistMetaFromStorage());
 
 		return metaById;
 	}
@@ -4966,12 +5180,22 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 	function ensureWatchlistPlayBaseline(item) {
 		if (!item) return;
 		if (item.WatchlistPlayBaseline) return;
+		const fromMap = getLocalWatchlistItemMetaMap()[item.Id];
+		if (fromMap && fromMap.WatchlistPlayBaseline) {
+			item.WatchlistPlayBaseline = fromMap.WatchlistPlayBaseline;
+			return;
+		}
 		setWatchlistPlayBaseline(item, item.UserData || {});
 	}
 
 	function ensureWatchlistDateAdded(item, fallbackDate = null) {
 		if (!item) return null;
 		if (item.WatchlistDateAdded) return item.WatchlistDateAdded;
+		const fromMap = getLocalWatchlistItemMetaMap()[item.Id];
+		if (fromMap && fromMap.WatchlistDateAdded) {
+			item.WatchlistDateAdded = fromMap.WatchlistDateAdded;
+			return item.WatchlistDateAdded;
+		}
 		item.WatchlistDateAdded = fallbackDate || new Date().toISOString();
 		return item.WatchlistDateAdded;
 	}
@@ -4981,7 +5205,11 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 		if (!userData || !userData.Played) return false;
 
 		const cachedItem = findWatchlistCachedItem(itemId);
-		const snapshot = cachedItem && cachedItem.WatchlistPlayBaseline;
+		let snapshot = cachedItem && cachedItem.WatchlistPlayBaseline;
+		if (!snapshot) {
+			const fromMap = getLocalWatchlistItemMetaMap()[itemId];
+			snapshot = fromMap && fromMap.WatchlistPlayBaseline;
+		}
 
 		// No baseline yet (e.g. Likes toggle race): keep on watchlist
 		if (!snapshot) {
@@ -5019,6 +5247,10 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 				if (item) {
 					ensureWatchlistDateAdded(item);
 					setWatchlistPlayBaseline(item, item.UserData || {});
+					upsertWatchlistItemMeta(itemId, {
+						WatchlistDateAdded: item.WatchlistDateAdded,
+						WatchlistPlayBaseline: item.WatchlistPlayBaseline
+					});
 
 					// Add to cache if not already present
 					const existingIndex = watchlistCache[sectionName].data.findIndex(cachedItem => cachedItem.Id === itemId);
@@ -5039,6 +5271,7 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 				}
 			} else {
 				// Item was removed from watchlist - remove from cache (props go with it)
+				removeWatchlistItemMeta(itemId);
 				const existingIndex = watchlistCache[sectionName].data.findIndex(cachedItem => cachedItem.Id === itemId);
 				if (existingIndex !== -1) {
 					const removedItem = watchlistCache[sectionName].data.splice(existingIndex, 1)[0];
@@ -8450,6 +8683,28 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 
     // Expose functions to global scope for onclick handlers
     window.toggleMovieFavorite = toggleMovieFavorite;
+
+	// Cross-client meta API for homeScreen (and early preload before watchlist tab opens)
+	window.KefinTweaksWatchlistMeta = {
+		ensureFromServer: ensureWatchlistMetaFromServer,
+		getLocalMap: getLocalWatchlistItemMetaMap
+	};
+
+	(function preloadWatchlistMetaWhenReady() {
+		const tryLoad = () => {
+			if (!window.ApiClient || typeof window.ApiClient.getCurrentUserId !== 'function') return false;
+			if (!window.ApiClient.getCurrentUserId()) return false;
+			ensureWatchlistMetaFromServer().catch(err => {
+				WARN('Early watchlist meta preload failed:', err);
+			});
+			return true;
+		};
+		if (tryLoad()) return;
+		const interval = setInterval(() => {
+			if (tryLoad()) clearInterval(interval);
+		}, 400);
+		setTimeout(() => clearInterval(interval), 30000);
+	})();
 
     LOG('Initialized successfully');
 })();
