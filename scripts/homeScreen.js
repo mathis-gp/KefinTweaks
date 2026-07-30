@@ -275,12 +275,24 @@
             // Migrate watchlist
             if (old.enableWatchlist !== undefined) {
                 migrated.watchlist = {
-                    enabled: old.enableWatchlist || false,
-                    itemLimit: 16,
-                    sortOrder: "DateAdded",
-                    sortOrderDirection: "Descending",
-                    cardFormat: "Poster",
-                    order: 60
+                    movies: {
+                        enabled: old.enableWatchlist || false,
+                        name: 'Watchlist - Movies',
+                        itemLimit: 16,
+                        sortOrder: 'DateAdded',
+                        sortOrderDirection: 'Ascending',
+                        cardFormat: 'Poster',
+                        order: 60
+                    },
+                    shows: {
+                        enabled: old.enableWatchlist || false,
+                        name: 'Watchlist - Shows',
+                        itemLimit: 16,
+                        sortOrder: 'DateAdded',
+                        sortOrderDirection: 'Ascending',
+                        cardFormat: 'Poster',
+                        order: 61
+                    }
                 };
             }
             
@@ -831,9 +843,68 @@
     const popularTVNetworksConfig = homeScreenConfig.popularTVNetworks || {};
     const minimumShowsForNetwork = popularTVNetworksConfig.minimumShowsForNetwork || 5;
     
-    // Watchlist configuration
-    const watchlistConfig = homeScreenConfig.watchlist || {};
-    const enableWatchlist = watchlistConfig.enabled || false;
+    // Watchlist configuration (movies + shows sections)
+    const watchlistRootConfig = homeScreenConfig.watchlist || {};
+    const watchlistSectionConfigs = (function normalizeWatchlistConfigs(wl) {
+        const defaultsMovies = {
+            enabled: false,
+            name: 'Watchlist - Movies',
+            itemLimit: defaultItemLimit,
+            sortOrder: 'DateAdded',
+            sortOrderDirection: 'Ascending',
+            cardFormat: defaultCardFormat,
+            order: 60
+        };
+        const defaultsShows = {
+            enabled: false,
+            name: 'Watchlist - Shows',
+            itemLimit: defaultItemLimit,
+            sortOrder: 'DateAdded',
+            sortOrderDirection: 'Ascending',
+            cardFormat: defaultCardFormat,
+            order: 61
+        };
+
+        // New nested format
+        if (wl.movies || wl.shows) {
+            return {
+                movies: { ...defaultsMovies, ...(wl.movies || {}) },
+                shows: { ...defaultsShows, ...(wl.shows || {}) }
+            };
+        }
+
+        // Legacy flat format
+        if (wl.enabled !== undefined || wl.sortOrder || wl.mediaTypes || wl.name) {
+            const shared = {
+                itemLimit: wl.itemLimit ?? defaultItemLimit,
+                sortOrder: wl.sortOrder ?? 'DateAdded',
+                sortOrderDirection: wl.sortOrderDirection ?? 'Ascending',
+                cardFormat: wl.cardFormat ?? defaultCardFormat,
+                order: wl.order ?? 60
+            };
+            return {
+                movies: {
+                    ...defaultsMovies,
+                    ...shared,
+                    enabled: !!wl.enabled && wl.mediaTypes !== 'shows',
+                    name: 'Watchlist - Movies'
+                },
+                shows: {
+                    ...defaultsShows,
+                    ...shared,
+                    enabled: !!wl.enabled && wl.mediaTypes !== 'movies',
+                    name: 'Watchlist - Shows',
+                    order: (wl.order ?? 60) + 1
+                }
+            };
+        }
+
+        return { movies: defaultsMovies, shows: defaultsShows };
+    })(watchlistRootConfig);
+    const watchlistMoviesConfig = watchlistSectionConfigs.movies;
+    const watchlistShowsConfig = watchlistSectionConfigs.shows;
+    const enableWatchlistMovies = watchlistMoviesConfig.enabled === true;
+    const enableWatchlistShows = watchlistShowsConfig.enabled === true;
     
     // Watch Again configuration
     const watchAgainConfig = homeScreenConfig.watchAgain || {};
@@ -2350,6 +2421,23 @@
     }
 
     /**
+     * Filters watchlist items by mediaTypes setting
+     * @param {Array} items
+     * @param {string} mediaTypes - 'all' | 'movies' | 'shows'
+     * @returns {Array}
+     */
+    function filterWatchlistByMediaTypes(items, mediaTypes = 'all') {
+        if (!items || mediaTypes === 'all') return items || [];
+        if (mediaTypes === 'movies') {
+            return items.filter(item => item.Type === 'Movie');
+        }
+        if (mediaTypes === 'shows') {
+            return items.filter(item => item.Type === 'Series' || item.Type === 'Season' || item.Type === 'Episode');
+        }
+        return items;
+    }
+
+    /**
      * Reads WatchlistDateAdded from the watchlist localStorage sections
      * (populated by watchlist.js when items are added)
      * @returns {Object} - Map of itemId -> WatchlistDateAdded ISO string
@@ -2392,11 +2480,12 @@
 
     /**
      * Gets watchlist data and attaches WatchlistDateAdded when available
-     * @returns {Array} - Combined watchlist items (movies + series + seasons + episodes)
+     * @param {string} mediaTypes - 'all' | 'movies' | 'shows'
+     * @returns {Array} - Combined watchlist items
      */
-    async function getWatchlistData() {
+    async function getWatchlistData(mediaTypes = 'all') {
         const watchlistData = await window.apiHelper.getWatchlistItems({ IncludeItemTypes: 'Movie,Series,Season,Episode' }, true);
-        const items = watchlistData.Items || [];
+        const items = filterWatchlistByMediaTypes(watchlistData.Items || [], mediaTypes);
         const dateAddedById = getWatchlistDateAddedMap();
 
         items.forEach(item => {
@@ -3046,34 +3135,47 @@
     }
 
     /**
-     * Renders watchlist section
+     * Renders a watchlist home section (movies or shows)
      * @param {HTMLElement} container - Container to append the section to
+     * @param {Object} sectionConfig - Section config from settings
+     * @param {Object} options
+     * @param {string} options.sectionId - Unique DOM/data id
+     * @param {string} options.mediaTypes - 'movies' | 'shows'
+     * @param {string} options.defaultName
+     * @param {number} options.defaultOrder
      * @returns {boolean} - Success status
      */
-    async function renderWatchlistSection(container) {
+    async function renderWatchlistSection(container, sectionConfig, options = {}) {
         try {
+            const {
+                sectionId = 'watchlist',
+                mediaTypes = 'all',
+                defaultName = 'Watchlist',
+                defaultOrder = 60
+            } = options;
+
             // Check if section is already on the page
-            const sectionContainer = container.querySelector('[data-custom-section-id="watchlist"]');
+            const sectionContainer = container.querySelector(`[data-custom-section-id="${sectionId}"]`);
             if (sectionContainer) {
-                LOG('Watchlist section already on the page, skipping...');
+                LOG(`Watchlist section ${sectionId} already on the page, skipping...`);
                 return false;
             }
 
-            const watchlistItems = await getWatchlistData();
+            const watchlistItems = await getWatchlistData(mediaTypes);
             
             if (watchlistItems.length === 0) {
                 return false; // Auto-hide empty sections
             }
             
             // Get config values from Home Screen settings
-            const itemLimit = watchlistConfig.itemLimit ?? defaultItemLimit;
-            const sortOrder = watchlistConfig.sortOrder ?? 'DateAdded';
-            const sortOrderDirection = watchlistConfig.sortOrderDirection ?? 'Ascending';
-            const cardFormat = watchlistConfig.cardFormat ?? defaultCardFormat;
-            const order = watchlistConfig.order ?? 60;
-            const sectionName = watchlistConfig.name || 'Watchlist';
+            const itemLimit = sectionConfig.itemLimit ?? defaultItemLimit;
+            const sortOrder = sectionConfig.sortOrder ?? 'DateAdded';
+            const sortOrderDirection = sectionConfig.sortOrderDirection ?? 'Ascending';
+            const cardFormat = sectionConfig.cardFormat ?? defaultCardFormat;
+            const order = sectionConfig.order ?? defaultOrder;
+            const sectionName = sectionConfig.name || defaultName;
 
-            LOG(`Watchlist section sort from config: ${sortOrder} (${sortOrderDirection}), limit: ${itemLimit}`);
+            LOG(`Watchlist section ${sectionId}: mediaTypes=${mediaTypes}, sort=${sortOrder} (${sortOrderDirection}), limit=${itemLimit}`);
             
             // Apply sorting from settings, then limit
             let sortedItems = watchlistItems;
@@ -3114,7 +3216,7 @@
             );
             
             // Add data attribute to track rendered sections
-            scrollableContainer.setAttribute('data-custom-section-id', 'watchlist');
+            scrollableContainer.setAttribute('data-custom-section-id', sectionId);
             scrollableContainer.setAttribute('data-custom-section-name', sectionName);
             scrollableContainer.style.order = order;
             
@@ -6061,9 +6163,22 @@
                 initPromises.push(renderAllSeasonalSections(homeSectionsContainer));
             }
 
-            // Add watchlist section if enabled
-            if (enableWatchlist) {
-                initPromises.push(renderWatchlistSection(homeSectionsContainer));
+            // Add watchlist sections if enabled
+            if (enableWatchlistMovies) {
+                initPromises.push(renderWatchlistSection(homeSectionsContainer, watchlistMoviesConfig, {
+                    sectionId: 'watchlist-movies',
+                    mediaTypes: 'movies',
+                    defaultName: 'Watchlist - Movies',
+                    defaultOrder: 60
+                }));
+            }
+            if (enableWatchlistShows) {
+                initPromises.push(renderWatchlistSection(homeSectionsContainer, watchlistShowsConfig, {
+                    sectionId: 'watchlist-shows',
+                    mediaTypes: 'shows',
+                    defaultName: 'Watchlist - Shows',
+                    defaultOrder: 61
+                }));
             }
 
             // Add Watch Again section if enabled
@@ -6117,7 +6232,7 @@
     window.debugCustomSections = function() {
         LOG('Custom sections configuration:', customHomeSections);
         LOG('New and Trending configuration - enableNewAndTrending:', enableNewAndTrending, 'enableNewMovies:', enableNewMovies, 'enableNewEpisodes:', enableNewEpisodes, 'enableTrending:', enableTrending);
-        LOG('Discovery configuration - enableWatchlist:', enableWatchlist, 'enableDiscovery:', enableDiscovery, 'enableSeasonal:', enableSeasonal);
+        LOG('Discovery configuration - enableWatchlistMovies:', enableWatchlistMovies, 'enableWatchlistShows:', enableWatchlistShows, 'enableDiscovery:', enableDiscovery, 'enableSeasonal:', enableSeasonal);
         LOG('Seasonal configuration - seasonalItemLimit:', SEASONAL_ITEM_LIMIT);
         LOG('Processing flag status:', isProcessing);
         
@@ -6155,8 +6270,8 @@
         LOG('LocalStorageCache available:', typeof window.LocalStorageCache !== 'undefined');
         
         // Check discovery section data availability
-        if (enableWatchlist) {
-            const watchlistData = getWatchlistData();
+        if (enableWatchlistMovies || enableWatchlistShows) {
+            const watchlistData = getWatchlistData('all');
             LOG('Watchlist data available:', watchlistData.length, 'items');
         }
         
