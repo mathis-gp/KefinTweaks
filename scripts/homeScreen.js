@@ -2350,16 +2350,82 @@
     }
 
     /**
-     * Gets watchlist data from localStorageCache
-     * @returns {Array} - Combined watchlist items (movies + series)
+     * Reads WatchlistDateAdded from the watchlist localStorage sections
+     * (populated by watchlist.js when items are added)
+     * @returns {Object} - Map of itemId -> WatchlistDateAdded ISO string
+     */
+    function getWatchlistDateAddedMap() {
+        const metaById = {};
+        if (typeof window.LocalStorageCache === 'undefined') {
+            return metaById;
+        }
+
+        const cache = new window.LocalStorageCache();
+        const userId = window.ApiClient?.getCurrentUserId?.() || null;
+
+        ['movies', 'series', 'seasons', 'episodes'].forEach(section => {
+            let cached = cache.get(`watchlist_${section}`, userId);
+
+            // Cache TTL is short; still read expired payload so DateAdded survives
+            if (!cached) {
+                try {
+                    const key = cache.getCacheKey(`watchlist_${section}`, userId);
+                    const raw = localStorage.getItem(key);
+                    if (raw) {
+                        cached = JSON.parse(raw).payload;
+                    }
+                } catch (_) {
+                    cached = null;
+                }
+            }
+
+            if (!Array.isArray(cached)) return;
+
+            cached.forEach(item => {
+                if (item && item.Id && item.WatchlistDateAdded) {
+                    metaById[item.Id] = item.WatchlistDateAdded;
+                }
+            });
+        });
+        return metaById;
+    }
+
+    /**
+     * Gets watchlist data and attaches WatchlistDateAdded when available
+     * @returns {Array} - Combined watchlist items (movies + series + seasons + episodes)
      */
     async function getWatchlistData() {
         const watchlistData = await window.apiHelper.getWatchlistItems({ IncludeItemTypes: 'Movie,Series,Season,Episode' }, true);
-        
-        return watchlistData.Items.sort((a, b) => {
-            const dateA = new Date(a.PremiereDate || 0);
-            const dateB = new Date(b.PremiereDate || 0);
-            return dateB - dateA;    
+        const items = watchlistData.Items || [];
+        const dateAddedById = getWatchlistDateAddedMap();
+
+        items.forEach(item => {
+            if (dateAddedById[item.Id]) {
+                item.WatchlistDateAdded = dateAddedById[item.Id];
+            }
+        });
+
+        return items;
+    }
+
+    /**
+     * Sorts watchlist items by WatchlistDateAdded (true date added to watchlist)
+     * @param {Array} items
+     * @param {string} sortOrderDirection - Ascending or Descending
+     * @returns {Array}
+     */
+    function sortWatchlistByDateAdded(items, sortOrderDirection = 'Descending') {
+        const ascending = sortOrderDirection === 'Ascending';
+        return [...items].sort((a, b) => {
+            const dateA = new Date(a.WatchlistDateAdded || 0);
+            const dateB = new Date(b.WatchlistDateAdded || 0);
+            if (dateA - dateB !== 0) {
+                return ascending ? dateA - dateB : dateB - dateA;
+            }
+            // Stable tiebreaker by name
+            const nameA = (a.Name || '').toLowerCase();
+            const nameB = (b.Name || '').toLowerCase();
+            return ascending ? nameA.localeCompare(nameB) : nameB.localeCompare(nameA);
         });
     }
 
@@ -2999,23 +3065,29 @@
                 return false; // Auto-hide empty sections
             }
             
-            // Get config values
+            // Get config values from Home Screen settings
             const itemLimit = watchlistConfig.itemLimit ?? defaultItemLimit;
-            const sortOrder = watchlistConfig.sortOrder ?? defaultSortOrder;
-            const sortOrderDirection = watchlistConfig.sortOrderDirection ?? 'Descending';
+            const sortOrder = watchlistConfig.sortOrder ?? 'DateAdded';
+            const sortOrderDirection = watchlistConfig.sortOrderDirection ?? 'Ascending';
             const cardFormat = watchlistConfig.cardFormat ?? defaultCardFormat;
             const order = watchlistConfig.order ?? 60;
             const sectionName = watchlistConfig.name || 'Watchlist';
+
+            LOG(`Watchlist section sort from config: ${sortOrder} (${sortOrderDirection}), limit: ${itemLimit}`);
             
-            // Apply sorting and limit
+            // Apply sorting from settings, then limit
             let sortedItems = watchlistItems;
             if (sortOrder === 'Random') {
                 sortedItems = [...watchlistItems].sort(() => Math.random() - 0.5);
-            } else {
-                // Use cardBuilder sort helper if available
-                if (window.cardBuilder && typeof window.cardBuilder.sortItems === 'function') {
-                    sortedItems = window.cardBuilder.sortItems(watchlistItems, sortOrder, sortOrderDirection);
-                }
+            } else if (sortOrder === 'DateAdded') {
+                // True watchlist add date (WatchlistDateAdded), not library DateCreated
+                sortedItems = sortWatchlistByDateAdded(watchlistItems, sortOrderDirection);
+            } else if (window.cardBuilder && typeof window.cardBuilder.sortItems === 'function') {
+                // Map config option names to cardBuilder sort keys when needed
+                const mappedSort = sortOrder === 'PremiereDate' ? 'ReleaseDate'
+                    : (sortOrder === 'Name' || sortOrder === 'SortName') ? 'SortTitle'
+                    : sortOrder;
+                sortedItems = window.cardBuilder.sortItems(watchlistItems, mappedSort, sortOrderDirection);
             }
             const limitedItems = sortedItems.slice(0, itemLimit);
             
@@ -3029,15 +3101,16 @@
                 return false;
             }
 
-            // Render the scrollable container with function-based navigation
+            // Already sorted above — do not pass sortOrder or renderCards will re-sort
+            // (DateAdded in cardBuilder uses DateCreated and would undo WatchlistDateAdded)
             const scrollableContainer = window.cardBuilder.renderCards(
                 limitedItems,
                 sectionName,
                 await getWatchlistUrl(),
                 true,
                 cardFormat,
-                sortOrder,
-                sortOrderDirection
+                null,
+                null
             );
             
             // Add data attribute to track rendered sections
