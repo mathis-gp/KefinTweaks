@@ -2444,6 +2444,23 @@
      */
     function getWatchlistDateAddedMap() {
         const metaById = {};
+
+        // Post-reset preserve (written by injector before cache wipe)
+        try {
+            const raw = localStorage.getItem('kefinTweaks_watchlist_meta_preserve');
+            if (raw) {
+                const parsed = JSON.parse(raw);
+                const payload = (parsed && parsed.payload) || {};
+                Object.keys(payload).forEach(id => {
+                    if (payload[id] && payload[id].WatchlistDateAdded) {
+                        metaById[id] = payload[id].WatchlistDateAdded;
+                    }
+                });
+            }
+        } catch (_) {
+            // ignore
+        }
+
         if (typeof window.LocalStorageCache === 'undefined') {
             return metaById;
         }

@@ -15,13 +15,49 @@
 
         if (remoteVersion > localVersion && remoteVersion > 0) {
             console.log('[KefinTweaks] Global reset detected. Clearing user configuration.');
-            // Only clear the user config to force defaults
+
+            // Snapshot watchlist meta before wipe so DateAdded / PlayBaseline can be re-applied
+            // when the watchlist cache is rebuilt after reset
+            const preservedWatchlistMeta = {};
+            Object.keys(localStorage)
+                .filter(key => key.startsWith('kefinTweaks_watchlist_') && key !== 'kefinTweaks_watchlist_meta_preserve')
+                .forEach(key => {
+                    try {
+                        const parsed = JSON.parse(localStorage.getItem(key));
+                        const payload = parsed && parsed.payload;
+                        if (!Array.isArray(payload)) return;
+                        payload.forEach(item => {
+                            if (!item || !item.Id) return;
+                            if (!item.WatchlistDateAdded && !item.WatchlistPlayBaseline) return;
+                            if (!preservedWatchlistMeta[item.Id]) preservedWatchlistMeta[item.Id] = {};
+                            if (item.WatchlistDateAdded) {
+                                preservedWatchlistMeta[item.Id].WatchlistDateAdded = item.WatchlistDateAdded;
+                            }
+                            if (item.WatchlistPlayBaseline) {
+                                preservedWatchlistMeta[item.Id].WatchlistPlayBaseline = item.WatchlistPlayBaseline;
+                            }
+                        });
+                    } catch (_) {
+                        // ignore malformed cache entries
+                    }
+                });
+
             // Remove all keys starting with 'kefinTweaks'
             Object.keys(localStorage)
                 .filter(key => key.startsWith('kefinTweaks'))
                 .forEach(key => localStorage.removeItem(key));
+
             // Update local version to avoid loop
             localStorage.setItem('kefinTweaks_lastResetVersion', remoteVersion.toString());
+
+            // Re-store watchlist meta so watchlist.js / homeScreen can restore props on rebuild
+            if (Object.keys(preservedWatchlistMeta).length > 0) {
+                localStorage.setItem('kefinTweaks_watchlist_meta_preserve', JSON.stringify({
+                    timestamp: Date.now(),
+                    payload: preservedWatchlistMeta
+                }));
+                console.log('[KefinTweaks] Preserved watchlist meta for', Object.keys(preservedWatchlistMeta).length, 'items');
+            }
         }
     } catch (e) {
         console.error('[KefinTweaks] Error checking for global reset:', e);

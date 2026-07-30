@@ -2634,6 +2634,9 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 				initWatchlistSection('boxsets', 'BoxSet'),
 				initWatchlistSection('playlists', 'Playlist')
 			]);
+
+			// Meta from post-reset preserve has been written back into section caches
+			clearPreservedWatchlistMetaFromStorage();
 			
 			tabStates.watchlist.isDataFetched = true;
 			tabStates.watchlist.isFetching = false;
@@ -4862,6 +4865,23 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 	const WATCHLIST_META_SECTIONS = ['movies', 'series', 'seasons', 'episodes'];
 
 	// Find a watchlisted item in the in-memory cache
+	const WATCHLIST_META_PRESERVE_KEY = 'kefinTweaks_watchlist_meta_preserve';
+
+	function getPreservedWatchlistMetaFromStorage() {
+		try {
+			const raw = localStorage.getItem(WATCHLIST_META_PRESERVE_KEY);
+			if (!raw) return {};
+			const parsed = JSON.parse(raw);
+			return (parsed && parsed.payload) || {};
+		} catch (_) {
+			return {};
+		}
+	}
+
+	function clearPreservedWatchlistMetaFromStorage() {
+		localStorage.removeItem(WATCHLIST_META_PRESERVE_KEY);
+	}
+
 	function findWatchlistCachedItem(itemId) {
 		if (!itemId) return null;
 		for (const section of WATCHLIST_META_SECTIONS) {
@@ -4871,7 +4891,7 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 		return null;
 	}
 
-	// Collect WatchlistDateAdded / WatchlistPlayBaseline from memory + localStorage
+	// Collect WatchlistDateAdded / WatchlistPlayBaseline from memory + localStorage (+ post-reset preserve)
 	function collectWatchlistMetaById() {
 		const metaById = {};
 
@@ -4886,11 +4906,40 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 			}
 		};
 
+		const mergeMetaMap = (map) => {
+			if (!map) return;
+			Object.keys(map).forEach(id => {
+				const meta = map[id];
+				if (!meta) return;
+				if (!metaById[id]) metaById[id] = {};
+				if (meta.WatchlistDateAdded && !metaById[id].WatchlistDateAdded) {
+					metaById[id].WatchlistDateAdded = meta.WatchlistDateAdded;
+				}
+				if (meta.WatchlistPlayBaseline && !metaById[id].WatchlistPlayBaseline) {
+					metaById[id].WatchlistPlayBaseline = meta.WatchlistPlayBaseline;
+				}
+			});
+		};
+
 		for (const section of WATCHLIST_META_SECTIONS) {
 			(watchlistCache[section]?.data || []).forEach(mergeItem);
-			const cached = localStorageCache.get(`watchlist_${section}`);
+
+			// Prefer valid cache, then raw/expired payload
+			let cached = localStorageCache.get(`watchlist_${section}`);
+			if (!cached) {
+				try {
+					const key = localStorageCache.getCacheKey(`watchlist_${section}`);
+					const raw = localStorage.getItem(key);
+					if (raw) cached = JSON.parse(raw).payload;
+				} catch (_) {
+					cached = null;
+				}
+			}
 			if (Array.isArray(cached)) cached.forEach(mergeItem);
 		}
+
+		// Meta saved by injector.js just before a configVersion cache wipe
+		mergeMetaMap(getPreservedWatchlistMetaFromStorage());
 
 		return metaById;
 	}
