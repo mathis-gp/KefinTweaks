@@ -173,9 +173,11 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 			historyStats.appendChild(refreshBtn);
 		}
 
-		// Watchlist tab refresh button
+		// Watchlist tab sort + refresh
 		const watchlistHeaderRight = watchlistSection.querySelector('.watchlist-header-right');
 		if (watchlistHeaderRight) {
+			const sortBtn = createWatchlistSortButton();
+			watchlistHeaderRight.appendChild(sortBtn);
 			const importExportBtn = createImportExportButton();
 			watchlistHeaderRight.appendChild(importExportBtn);
 			const refreshBtn = createRefreshButton('watchlist', 'Watchlist');
@@ -567,6 +569,133 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 			if (labelSpan) {
 				labelSpan.textContent = `${label} ${directionText}`;
 			}
+		}
+	}
+
+	function createWatchlistSortButton() {
+		const sortBtn = document.createElement('button');
+		sortBtn.className = 'sort-button';
+		sortBtn.id = 'watchlist-sort-btn';
+
+		const currentSort = getCurrentWatchlistSortOrder();
+		const currentLabel = WATCHLIST_SORT_OPTIONS[currentSort]?.label || 'Date Added';
+
+		sortBtn.innerHTML = `
+			<span class="material-icons sort"></span>
+			<span class="sort-label">${currentLabel}</span>
+			<span class="material-icons arrow_drop_down"></span>
+		`;
+		sortBtn.title = 'Sort watchlist by different criteria';
+
+		sortBtn.onclick = (e) => {
+			e.preventDefault();
+			e.stopPropagation();
+			showWatchlistSortModal();
+		};
+
+		updateWatchlistSortButtonLabel(currentSort);
+		return sortBtn;
+	}
+
+	function showWatchlistSortModal() {
+		const watchlistSortOptionsContent = `
+			<h2 style="margin: 0 0 .5em;">Sort By</h2>
+			<div>
+				${Object.entries(WATCHLIST_SORT_OPTIONS).map(([key, option]) => `
+					<label class="radio-label-block mdl-radio mdl-js-radio mdl-js-ripple-effect show-focus">
+						<input type="radio" is="emby-radio" name="watchlistSortOption" data-id="${key}" value="${key}" class="menuSortBy mdl-radio__button" data-radio="true" ${option.default ? 'checked=""' : ''}>
+						<div class="mdl-radio__circles">
+							<svg>
+								<defs>
+									<clipPath id="cutoff-watchlist-${key}">
+										<circle cx="50%" cy="50%" r="50%"></circle>
+									</clipPath>
+								</defs>
+								<circle class="mdl-radio__outer-circle" cx="50%" cy="50%" r="50%" fill="none" stroke="currentcolor" stroke-width="0.26em" clip-path="url(#cutoff-watchlist-${key})"></circle>
+								<circle class="mdl-radio__inner-circle" cx="50%" cy="50%" r="25%" fill="currentcolor"></circle>
+							</svg>
+							<div class="mdl-radio__focus-circle"></div>
+						</div>
+						<span class="radioButtonLabel mdl-radio__label">${option.label}</span>
+					</label>
+				`).join('')}
+			</div>
+			<h2 style="margin: 1em 0 .5em;">Sort Order</h2>
+			<div>
+				<label class="radio-label-block mdl-radio mdl-js-radio mdl-js-ripple-effect show-focus">
+					<input type="radio" is="emby-radio" name="watchlistSortDirection" value="asc" class="menuSortOrder mdl-radio__button" data-radio="true">
+					<div class="mdl-radio__circles">
+						<svg>
+							<defs>
+								<clipPath id="cutoff-watchlist-asc">
+									<circle cx="50%" cy="50%" r="50%"></circle>
+								</clipPath>
+							</defs>
+							<circle class="mdl-radio__outer-circle" cx="50%" cy="50%" r="50%" fill="none" stroke="currentcolor" stroke-width="0.26em" clip-path="url(#cutoff-watchlist-asc)"></circle>
+							<circle class="mdl-radio__inner-circle" cx="50%" cy="50%" r="25%" fill="currentcolor"></circle>
+						</svg>
+						<div class="mdl-radio__focus-circle"></div>
+					</div>
+					<span class="radioButtonLabel mdl-radio__label">Ascending</span>
+				</label>
+				<label class="radio-label-block mdl-radio mdl-js-radio mdl-js-ripple-effect show-focus">
+					<input type="radio" is="emby-radio" name="watchlistSortDirection" value="desc" class="menuSortOrder mdl-radio__button" checked="" data-radio="true">
+					<div class="mdl-radio__circles">
+						<svg>
+							<defs>
+								<clipPath id="cutoff-watchlist-desc">
+									<circle cx="50%" cy="50%" r="50%"></circle>
+								</clipPath>
+							</defs>
+							<circle class="mdl-radio__outer-circle" cx="50%" cy="50%" r="50%" fill="none" stroke="currentcolor" stroke-width="0.26em" clip-path="url(#cutoff-watchlist-desc)"></circle>
+							<circle class="mdl-radio__inner-circle" cx="50%" cy="50%" r="25%" fill="currentcolor"></circle>
+						</svg>
+						<div class="mdl-radio__focus-circle"></div>
+					</div>
+					<span class="radioButtonLabel mdl-radio__label">Descending</span>
+				</label>
+			</div>
+		`;
+
+		window.ModalSystem.create({
+			id: 'watchlist-sort-modal',
+			content: watchlistSortOptionsContent,
+			onOpen: (modalInstance) => {
+				const currentSort = getCurrentWatchlistSortOrder();
+				const currentDirection = getCurrentWatchlistSortDirection();
+				const currentRadio = modalInstance.dialog.querySelector(`input[name="watchlistSortOption"][value="${currentSort}"]`);
+				const currentDirectionRadio = modalInstance.dialog.querySelector(`input[name="watchlistSortDirection"][value="${currentDirection}"]`);
+				if (currentRadio) currentRadio.checked = true;
+				if (currentDirectionRadio) currentDirectionRadio.checked = true;
+
+				const applyChanges = () => {
+					const selectedOption = modalInstance.dialog.querySelector('input[name="watchlistSortOption"]:checked');
+					const selectedDirection = modalInstance.dialog.querySelector('input[name="watchlistSortDirection"]:checked');
+					if (!selectedOption) return;
+					const direction = selectedDirection ? selectedDirection.value : 'asc';
+					setWatchlistSortOrder(selectedOption.value, direction);
+					updateWatchlistSortButtonLabel(selectedOption.value, direction);
+				};
+
+				modalInstance.dialog.querySelectorAll('input[name="watchlistSortOption"], input[name="watchlistSortDirection"]')
+					.forEach((input) => input.addEventListener('change', applyChanges));
+			}
+		});
+	}
+
+	function updateWatchlistSortButtonLabel(sortKey, direction = null) {
+		const watchlistSection = getWatchlistSection();
+		if (!watchlistSection) return;
+
+		const sortBtn = watchlistSection.querySelector('#watchlist-sort-btn');
+		if (!sortBtn) return;
+
+		const currentDirection = direction || getCurrentWatchlistSortDirection();
+		const directionText = currentDirection === 'asc' ? '↑' : '↓';
+		const label = WATCHLIST_SORT_OPTIONS[sortKey]?.label || 'Date Added';
+		const labelSpan = sortBtn.querySelector('.sort-label');
+		if (labelSpan) {
+			labelSpan.textContent = `${label} ${directionText}`;
 		}
 	}
 
@@ -1742,7 +1871,9 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 				sort: params.get('sort') || 'lastWatched',
 				sortDirection: params.get('sortDirection') || 'desc',
 				movieSort: params.get('movieSort') || 'lastWatched',
-				movieSortDirection: params.get('movieSortDirection') || 'desc'
+				movieSortDirection: params.get('movieSortDirection') || 'desc',
+				watchlistSort: params.get('watchlistSort') || '',
+				watchlistSortDirection: params.get('watchlistSortDirection') || ''
 			};
 		}
 		
@@ -1755,11 +1886,13 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 			sort: 'lastWatched',
 			sortDirection: 'desc',
 			movieSort: 'lastWatched',
-			movieSortDirection: 'desc'
+			movieSortDirection: 'desc',
+			watchlistSort: '',
+			watchlistSortDirection: ''
 		};
 	}
 
-	function updateUrlParams(pageTab, page, sort = null, sortDirection = null, movieSort = null, movieSortDirection = null) {
+	function updateUrlParams(pageTab, page, sort = null, sortDirection = null, movieSort = null, movieSortDirection = null, watchlistSort = null, watchlistSortDirection = null) {
 		const currentHash = window.location.hash;
 		
 		let newHash = currentHash;
@@ -1773,6 +1906,8 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 		const currentDirection = sortDirection || (pageTab === 'progress' ? getCurrentSortDirection() : null);
 		const currentMovieSort = movieSort || (pageTab === 'history' ? getCurrentMovieSortOrder() : null);
 		const currentMovieDirection = movieSortDirection || (pageTab === 'history' ? getCurrentMovieSortDirection() : null);
+		const currentWatchlistSort = watchlistSort || (pageTab === 'watchlist' ? getCurrentWatchlistSortOrder() : null);
+		const currentWatchlistDirection = watchlistSortDirection || (pageTab === 'watchlist' ? getCurrentWatchlistSortDirection() : null);
 		
 		if (currentHash.includes('?')) {
 			// Replace existing parameters
@@ -1810,6 +1945,16 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 			} else if (pageTab !== 'history') {
 				params.delete('movieSort');
 				params.delete('movieSortDirection');
+			}
+
+			if (currentWatchlistSort && pageTab === 'watchlist') {
+				params.set('watchlistSort', currentWatchlistSort);
+				if (currentWatchlistDirection) {
+					params.set('watchlistSortDirection', currentWatchlistDirection);
+				}
+			} else if (pageTab !== 'watchlist') {
+				params.delete('watchlistSort');
+				params.delete('watchlistSortDirection');
 			}
 			
 			// Update search parameters based on tab
@@ -1849,6 +1994,13 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 				paramString += `&movieSort=${currentMovieSort}`;
 				if (currentMovieDirection) {
 					paramString += `&movieSortDirection=${currentMovieDirection}`;
+				}
+			}
+
+			if (currentWatchlistSort && pageTab === 'watchlist') {
+				paramString += `&watchlistSort=${currentWatchlistSort}`;
+				if (currentWatchlistDirection) {
+					paramString += `&watchlistSortDirection=${currentWatchlistDirection}`;
 				}
 			}
 			
@@ -2140,6 +2292,21 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 		
 		// Re-render content
 		renderHistoryContent();
+	}
+
+	function setWatchlistSortOrder(sortKey, direction = null) {
+		if (!WATCHLIST_SORT_OPTIONS[sortKey]) {
+			LOG(`Invalid watchlist sort key: ${sortKey}`);
+			return;
+		}
+
+		const sortDirection = direction || WATCHLIST_SORT_OPTIONS[sortKey].defaultDirection;
+		localStorage.setItem('kefinTweaks_watchlistSort', sortKey);
+		localStorage.setItem('kefinTweaks_watchlistSortDirection', sortDirection);
+
+		const params = getUrlParams();
+		updateUrlParams(params.pageTab, 1, null, null, null, null, sortKey, sortDirection);
+		renderWatchlistProgressive(false);
 	}
 
 	// Apply sorting to data
@@ -3345,15 +3512,174 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 		return host;
 	}
 
+	const WATCHLIST_ITEM_META_KEY = 'kefinTweaks_watchlist_item_meta';
+
+	function readWatchlistItemMetaMap() {
+		try {
+			const raw = localStorage.getItem(WATCHLIST_ITEM_META_KEY);
+			const parsed = raw ? JSON.parse(raw) : {};
+			return parsed && typeof parsed === 'object' ? parsed : {};
+		} catch (err) {
+			return {};
+		}
+	}
+
+	function writeWatchlistItemMetaMap(map) {
+		localStorage.setItem(WATCHLIST_ITEM_META_KEY, JSON.stringify(map));
+	}
+
+	function getWatchlistItemMeta(itemId) {
+		if (!itemId) return null;
+		return readWatchlistItemMetaMap()[itemId] || null;
+	}
+
+	function upsertWatchlistItemMeta(itemId, patch) {
+		if (!itemId) return null;
+		const map = readWatchlistItemMetaMap();
+		map[itemId] = { ...(map[itemId] || {}), ...patch };
+		writeWatchlistItemMetaMap(map);
+		return map[itemId];
+	}
+
+	function removeWatchlistItemMeta(itemId) {
+		if (!itemId) return;
+		const map = readWatchlistItemMetaMap();
+		if (!map[itemId]) return;
+		delete map[itemId];
+		writeWatchlistItemMetaMap(map);
+	}
+
+	function clearWatchlistItemMeta() {
+		localStorage.removeItem(WATCHLIST_ITEM_META_KEY);
+	}
+
+	function recordWatchlistMetaOnAdd(itemId, userData) {
+		if (!itemId) return null;
+		const existing = getWatchlistItemMeta(itemId);
+		if (existing?.WatchlistDateAdded && existing?.WatchlistPlayBaseline) return existing;
+		return upsertWatchlistItemMeta(itemId, {
+			WatchlistDateAdded: existing?.WatchlistDateAdded || new Date().toISOString(),
+			WatchlistPlayBaseline: existing?.WatchlistPlayBaseline || {
+				played: !!(userData && userData.Played),
+				playCount: (userData && userData.PlayCount) || 0,
+				lastPlayedDate: (userData && userData.LastPlayedDate) || null
+			}
+		});
+	}
+
+	function attachWatchlistMeta(item, index, total) {
+		if (!item?.Id) return item;
+		const existing = getWatchlistItemMeta(item.Id);
+		if (existing?.WatchlistDateAdded && existing?.WatchlistPlayBaseline) {
+			item.WatchlistDateAdded = existing.WatchlistDateAdded;
+			item.WatchlistPlayBaseline = existing.WatchlistPlayBaseline;
+			return item;
+		}
+
+		const userData = item.UserData || {};
+		const fallbackDate = new Date(Date.now() - (total - index) * 1000).toISOString();
+		const meta = upsertWatchlistItemMeta(item.Id, {
+			WatchlistDateAdded: existing?.WatchlistDateAdded || fallbackDate,
+			WatchlistPlayBaseline: existing?.WatchlistPlayBaseline || {
+				played: !!userData.Played,
+				playCount: userData.PlayCount || 0,
+				lastPlayedDate: userData.LastPlayedDate || null
+			}
+		});
+		item.WatchlistDateAdded = meta.WatchlistDateAdded;
+		item.WatchlistPlayBaseline = meta.WatchlistPlayBaseline;
+		return item;
+	}
+
+	function shouldRemoveFromWatchlistAfterPlay(itemId, userData) {
+		if (!userData || !userData.Played) return false;
+
+		const snapshot = getWatchlistItemMeta(itemId)?.WatchlistPlayBaseline;
+		if (!snapshot) return false;
+
+		if (!snapshot.played && userData.Played) return true;
+
+		const currentPlayCount = userData.PlayCount || 0;
+		if (currentPlayCount > (snapshot.playCount || 0)) return true;
+
+		return false;
+	}
+
+	function sortWatchlistByDateAdded(a, b, direction = 'asc') {
+		const dateA = new Date(a.WatchlistDateAdded || 0);
+		const dateB = new Date(b.WatchlistDateAdded || 0);
+		const result = dateA - dateB;
+		if (result !== 0) return direction === 'asc' ? result : -result;
+		const nameResult = (a.Name || '').localeCompare(b.Name || '');
+		return direction === 'asc' ? nameResult : -nameResult;
+	}
+
+	function sortWatchlistByName(a, b, direction = 'asc') {
+		const result = (a.Name || '').localeCompare(b.Name || '');
+		return direction === 'asc' ? result : -result;
+	}
+
+	function sortWatchlistByReleaseDate(a, b, direction = 'desc') {
+		const dateA = new Date(a.PremiereDate || a.ProductionYear || 0);
+		const dateB = new Date(b.PremiereDate || b.ProductionYear || 0);
+		const result = dateA - dateB;
+		return direction === 'asc' ? result : -result;
+	}
+
+	const WATCHLIST_SORT_OPTIONS = {
+		dateAdded: {
+			label: 'Date Added',
+			default: true,
+			defaultDirection: 'asc',
+			sortFn: (a, b, direction) => sortWatchlistByDateAdded(a, b, direction)
+		},
+		name: {
+			label: 'Name',
+			defaultDirection: 'asc',
+			sortFn: (a, b, direction) => sortWatchlistByName(a, b, direction)
+		},
+		releaseDate: {
+			label: 'Release Date',
+			defaultDirection: 'desc',
+			sortFn: (a, b, direction) => sortWatchlistByReleaseDate(a, b, direction)
+		}
+	};
+
+	function getCurrentWatchlistSortOrder() {
+		const params = getUrlParams();
+		if (params.watchlistSort && WATCHLIST_SORT_OPTIONS[params.watchlistSort]) {
+			return params.watchlistSort;
+		}
+		const savedSort = localStorage.getItem('kefinTweaks_watchlistSort');
+		if (savedSort && WATCHLIST_SORT_OPTIONS[savedSort]) return savedSort;
+		return 'dateAdded';
+	}
+
+	function getCurrentWatchlistSortDirection() {
+		const params = getUrlParams();
+		if (params.watchlistSortDirection === 'asc' || params.watchlistSortDirection === 'desc') {
+			return params.watchlistSortDirection;
+		}
+		const savedDirection = localStorage.getItem('kefinTweaks_watchlistSortDirection');
+		if (savedDirection === 'asc' || savedDirection === 'desc') return savedDirection;
+		return WATCHLIST_SORT_OPTIONS[getCurrentWatchlistSortOrder()]?.defaultDirection || 'asc';
+	}
+
+	function applyWatchlistSorting(data, sortKey = null) {
+		const items = Array.isArray(data) ? data : [];
+		const key = sortKey || getCurrentWatchlistSortOrder();
+		const sortOption = WATCHLIST_SORT_OPTIONS[key];
+		if (!sortOption) return items;
+		const sortDirection = getCurrentWatchlistSortDirection();
+		return [...items].sort((a, b) => sortOption.sortFn(a, b, sortDirection));
+	}
+
 	function postProcessWatchlistItems(data) {
 		const items = Array.isArray(data)
 			? data.slice()
 			: (Array.isArray(data?.Items) ? data.Items.slice() : []);
-		return items.sort((a, b) => {
-			const dateA = new Date(a.PremiereDate || a.ProductionYear || 0);
-			const dateB = new Date(b.PremiereDate || b.ProductionYear || 0);
-			return dateB - dateA;
-		});
+		items.forEach((item, index) => attachWatchlistMeta(item, index, items.length));
+		return applyWatchlistSorting(items);
 	}
 
 	async function buildWatchlistProgressiveSection(itemType, label, order, forceRefresh = false) {
@@ -5000,6 +5326,7 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 		watchlistLikedIds.clear();
 		watchlistLikedIdsLoaded = true;
 		writeLikedIdsToStorage();
+		clearWatchlistItemMeta();
 		syncOverlayWatchlistButtons();
 
 		// Refresh watchlist
@@ -5018,6 +5345,19 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 			LOG(`Watchlist membership changed for ${itemType || 'unknown'} ${itemId} (added=${isAdded}); invalidating query cache`);
 			setLikedIdInCache(itemId, isAdded === true);
 			patchWatchlistItemsByTypeMembership(itemId, itemType, isAdded === true);
+
+			if (isAdded) {
+				let userData = {};
+				try {
+					const addedItem = await ApiClient.getItem(ApiClient.getCurrentUserId(), itemId);
+					userData = addedItem?.UserData || {};
+				} catch (err) {
+					WARN('Could not read item while storing watchlist meta:', err);
+				}
+				recordWatchlistMetaOnAdd(itemId, userData);
+			} else {
+				removeWatchlistItemMeta(itemId);
+			}
 
 			if (itemType && isWatchlistSupportedType(itemType)) {
 				await window.apiHelper?.invalidateWatchlistQueries?.({ IncludeItemTypes: itemType });
@@ -5041,6 +5381,18 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 
 		if (isItemInLikedIdCache(itemId) !== isLiked) {
 			setLikedIdInCache(itemId, isLiked);
+		}
+		if (isLiked) {
+			if (!getWatchlistItemMeta(itemId)?.WatchlistPlayBaseline) {
+				try {
+					const likedItem = await ApiClient.getItem(ApiClient.getCurrentUserId(), itemId);
+					recordWatchlistMetaOnAdd(itemId, likedItem?.UserData || {});
+				} catch (err) {
+					recordWatchlistMetaOnAdd(itemId, {});
+				}
+			}
+		} else {
+			removeWatchlistItemMeta(itemId);
 		}
 		// Keep header counts aligned even if liked-Id Set was already updated by cardBuilder
 		patchWatchlistItemsByTypeMembership(itemId, itemType, isLiked);
@@ -5080,7 +5432,7 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 						LOG(`Detected UserDataChanged for item: ${userData.ItemId}, Played: ${userData.Played}, Likes: ${userData.Likes}`);
 						(async () => {
 							await handleItemWatchlistChange(userData.ItemId, userData.Likes);
-							await handleItemWatchedStatusChange(userData.ItemId, userData.Played, userData.Likes);
+							await handleItemWatchedStatusChange(userData.ItemId, userData.Played, userData.Likes, userData);
 						})().catch(err => {
 							ERR('Error handling UserDataChanged event:', err);
 						});
@@ -5116,12 +5468,16 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 	}
 
 	// Shared handler for when items' watched status changes (played or unplayed)
-	async function handleItemWatchedStatusChange(itemId, isPlayed, isWatchlisted) {
+	async function handleItemWatchedStatusChange(itemId, isPlayed, isWatchlisted, userData = null) {
 		try {
 			LOG('Item watched status changed:', itemId);
 			
-			// Get the item data to check current played status
 			const item = await getWatchedItem(itemId);
+			if (!item) return;
+
+			if (userData) {
+				item.UserData = { ...(item.UserData || {}), ...userData };
+			}
 
 			// Only handle movies, series, seasons, and episodes
 			if (item.Type !== 'Movie' && item.Type !== 'Series' && item.Type !== 'Season' && item.Type !== 'Episode') {
@@ -5131,9 +5487,10 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 			LOG(`Item is now ${isPlayed ? 'played' : 'unplayed'}:`, item.Name);
 			
 			if (isPlayed) {
-				if (isWatchlisted) {
-					// Item is now played - remove from watchlist and update caches
-					LOG('Item is now played and watchlisted, removing from watchlist:', item.Name);
+				const currentUserData = item.UserData || {};
+				const inWatchlist = isWatchlisted === true || isItemInLikedIdCache(itemId);
+				if (inWatchlist && shouldRemoveFromWatchlistAfterPlay(itemId, currentUserData)) {
+					LOG('Item was (re)watched past its watchlist baseline, removing:', item.Name);
 					await removeItemFromWatchlist(itemId, item.Type);
 				}
 				
@@ -5163,33 +5520,7 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 					}
 				}
 
-				// Extract item ID from current URL
-				const currentUrl = window.location.hash;
-				const urlMatch = currentUrl.match(/[?&]id=([^&]+)/);
-				const currentItemId = urlMatch ? urlMatch[1] : null;
-
-				// Hide the watchlist button if we are on the item detail page of the item that was just watched
-				if (currentItemId === itemId) {
-					const watchlistIcon = document.querySelector('.itemDetailPage:not(.hide) .watchlist-icon');
-					if (watchlistIcon) {
-						watchlistIcon.style.display = "none";
-						LOG('Hidden watchlist button on item detail page of watched item');
-					}
-				}
-
-				// Check for any cards on the page for the item that was just watched and hide the watchlist button if found
-				const itemCards = document.querySelectorAll('.card[data-id="' + itemId + '"]');
-				if (itemCards.length > 0) {
-					for (const card of itemCards) {
-						const watchlistIcon = card.querySelector('.watchlist-button');
-						if (watchlistIcon) {
-							watchlistIcon.dataset.active = "false";
-							LOG('Hidden watchlist button on card for watched item');
-						}
-					}
-				}
-				
-				LOG('Successfully removed played item from watchlist and updated caches:', item.Name);
+				LOG('Watched status caches updated:', item.Name);
 			} else {
 				// Item is now unplayed - update caches to reflect unwatched status
 				LOG('Item is now unplayed, updating caches:', item.Name);
@@ -5473,9 +5804,12 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 				const seasonInWatchlist = await checkIfItemInWatchlist(episode.SeasonId);
 				if (seasonInWatchlist) {
 					const seasonItem = await ApiClient.getItem(ApiClient.getCurrentUserId(), episode.SeasonId);
-					if (seasonItem && seasonItem.UserData && seasonItem.UserData.Played) {
-						LOG('Season is now played, removing from watchlist:', seasonItem.Name);
-						await removeItemFromWatchlist(episode.SeasonId, 'Season');
+					if (seasonItem && seasonItem.UserData) {
+						const snapshot = getWatchlistItemMeta(episode.SeasonId)?.WatchlistPlayBaseline;
+						if (shouldRemoveFromWatchlistAfterPlay(episode.SeasonId, seasonItem.UserData) || (snapshot && snapshot.played)) {
+							LOG('Season was (re)watched, removing from watchlist:', seasonItem.Name);
+							await removeItemFromWatchlist(episode.SeasonId, 'Season');
+						}
 					}
 				}
 			}
@@ -5485,9 +5819,12 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 				const seriesInWatchlist = await checkIfItemInWatchlist(episode.SeriesId);
 				if (seriesInWatchlist) {
 					const seriesItem = await ApiClient.getItem(ApiClient.getCurrentUserId(), episode.SeriesId);
-					if (seriesItem && seriesItem.UserData && seriesItem.UserData.Played) {
-						LOG('Series is now played, removing from watchlist:', seriesItem.Name);
-						await removeItemFromWatchlist(episode.SeriesId, 'Series');
+					if (seriesItem && seriesItem.UserData) {
+						const snapshot = getWatchlistItemMeta(episode.SeriesId)?.WatchlistPlayBaseline;
+						if (shouldRemoveFromWatchlistAfterPlay(episode.SeriesId, seriesItem.UserData) || (snapshot && snapshot.played)) {
+							LOG('Series was (re)watched, removing from watchlist:', seriesItem.Name);
+							await removeItemFromWatchlist(episode.SeriesId, 'Series');
+						}
 					}
 				}
 			}
@@ -5496,7 +5833,7 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 		}
 	}
 
-	// Sync watched status to watchlist - remove all played items
+	// Sync watched status to watchlist - remove items (re)watched past their add-time baseline
 	async function syncWatchedStatusToWatchlist() {
 		try {
 			LOG('Syncing watched status to watchlist...');
@@ -5504,25 +5841,22 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 
 			for (const { type } of WATCHLIST_SECTION_TYPES) {
 				const items = watchlistItemsByType[type] || [];
-				const playedItems = items.filter(item => item.UserData && item.UserData.Played);
-
-				if (playedItems.length > 0) {
-					LOG(`Found ${playedItems.length} played items in ${type} section`);
-					for (const item of playedItems) {
-						await ApiClient.updateUserItemRating(ApiClient.getCurrentUserId(), item.Id, 'false');
-						setLikedIdInCache(item.Id, false);
-						removedCount++;
-					}
+				for (const item of items) {
+					if (!item?.UserData) continue;
+					if (!shouldRemoveFromWatchlistAfterPlay(item.Id, item.UserData)) continue;
+					LOG(`Removing (re)watched ${type} from watchlist:`, item.Name);
+					await removeItemFromWatchlist(item.Id, item.Type);
+					removedCount++;
 				}
 			}
 
 			if (removedCount > 0) {
-				LOG(`Sync complete: removed ${removedCount} played items from watchlist; refreshing`);
+				LOG(`Sync complete: removed ${removedCount} (re)watched items from watchlist; refreshing`);
 				syncOverlayWatchlistButtons();
 				await invalidateAllWatchlistQueries();
 				await renderWatchlistProgressive(true);
 			} else {
-				LOG('Sync complete: no played items found in watchlist');
+				LOG('Sync complete: no (re)watched items to remove from watchlist');
 			}
 		} catch (err) {
 			ERR('Error syncing watched status to watchlist:', err);
@@ -8006,10 +8340,6 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 			if (resolvedItem.Type !== 'Movie' && resolvedItem.Type !== 'Series' && resolvedItem.Type !== 'Season'
 				&& resolvedItem.Type !== 'Episode' && resolvedItem.Type !== 'BoxSet'
 				&& resolvedItem.Type !== 'Playlist' && resolvedItem.Type !== 'Video') {
-				watchlistIcon.style.display = 'none';
-				return;
-			}
-			if (resolvedItem.UserData && resolvedItem.UserData.Played) {
 				watchlistIcon.style.display = 'none';
 				return;
 			}

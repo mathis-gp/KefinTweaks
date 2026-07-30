@@ -2228,10 +2228,7 @@ div[data-tab="watchlist"] .loading-message {
 		"opsz" 48;
 }
 
-.card:has(button[data-played="true"]) .watchlist-button,
-.mainDetailButtons:has(button[data-played].playstatebutton-played) .watchlist-icon {
-	display: none;
-}
+/* Watched items stay eligible for the watchlist. */
 
 /* Do not show watchlist ahead of native Play reveal */
 .mainDetailButtons:not(:has(.btnPlay:not(.hide))) .watchlist-icon {
