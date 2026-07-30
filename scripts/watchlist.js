@@ -2544,6 +2544,7 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 		tabStates.watchlist.isDataFetched = false;
 		
 		try {
+			mergePreservedWatchlistMetaIntoStore();
 			if (forceRefresh) {
 				await invalidateAllWatchlistQueries();
 			}
@@ -5340,6 +5341,41 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 	 * Do not full-rebuild the Watchlist tab (avoids scroll jump / stale re-paint races).
 	 * Cards stay as ghosts until next visit; cardBuilder owns overlay button UI via UserDataChanged.
 	 */
+	const WATCHLIST_META_PRESERVE_KEY = 'kefinTweaks_watchlist_meta_preserve';
+
+	function getPreservedWatchlistMetaFromStorage() {
+		try {
+			const raw = localStorage.getItem(WATCHLIST_META_PRESERVE_KEY);
+			if (!raw) return {};
+			const parsed = JSON.parse(raw);
+			return (parsed && parsed.payload) || {};
+		} catch (err) {
+			return {};
+		}
+	}
+
+	function clearPreservedWatchlistMetaFromStorage() {
+		localStorage.removeItem(WATCHLIST_META_PRESERVE_KEY);
+	}
+
+	function mergePreservedWatchlistMetaIntoStore() {
+		const preserved = getPreservedWatchlistMetaFromStorage();
+		Object.keys(preserved).forEach((id) => {
+			const meta = preserved[id];
+			if (!meta) return;
+			const existing = getWatchlistItemMeta(id);
+			const patch = {};
+			if (!existing?.WatchlistDateAdded && meta.WatchlistDateAdded) {
+				patch.WatchlistDateAdded = meta.WatchlistDateAdded;
+			}
+			if (!existing?.WatchlistPlayBaseline && meta.WatchlistPlayBaseline) {
+				patch.WatchlistPlayBaseline = meta.WatchlistPlayBaseline;
+			}
+			if (Object.keys(patch).length) upsertWatchlistItemMeta(id, patch);
+		});
+		if (Object.keys(preserved).length) clearPreservedWatchlistMetaFromStorage();
+	}
+
 	async function updateWatchlistCacheOnToggle(itemId, itemType, isAdded) {
 		try {
 			LOG(`Watchlist membership changed for ${itemType || 'unknown'} ${itemId} (added=${isAdded}); invalidating query cache`);

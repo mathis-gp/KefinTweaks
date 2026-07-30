@@ -2444,6 +2444,37 @@
      */
     function getWatchlistDateAddedMap() {
         const metaById = {};
+
+        // Post-reset preserve (written by injector before cache wipe)
+        try {
+            const raw = localStorage.getItem('kefinTweaks_watchlist_meta_preserve');
+            if (raw) {
+                const parsed = JSON.parse(raw);
+                const payload = (parsed && parsed.payload) || {};
+                Object.keys(payload).forEach(id => {
+                    if (payload[id] && payload[id].WatchlistDateAdded) {
+                        metaById[id] = payload[id].WatchlistDateAdded;
+                    }
+                });
+            }
+        } catch (_) {
+            // ignore
+        }
+
+        try {
+            const rawMeta = localStorage.getItem('kefinTweaks_watchlist_item_meta');
+            if (rawMeta) {
+                const map = JSON.parse(rawMeta);
+                Object.keys(map || {}).forEach(id => {
+                    if (map[id] && map[id].WatchlistDateAdded) {
+                        metaById[id] = map[id].WatchlistDateAdded;
+                    }
+                });
+            }
+        } catch (_) {
+            // ignore
+        }
+
         if (typeof window.LocalStorageCache === 'undefined') {
             return metaById;
         }
