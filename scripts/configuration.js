@@ -1814,12 +1814,14 @@
             includeItemLimit = true,
             includeIsPlayed = false,
             includePremiereDays = false,
-            includeMediaTypes = false
+            includeMediaTypes = false,
+            includeCustomSort = false,
+            defaultSortOrder = 'Random'
         } = options;
 
         const nameValue = config.name ?? defaultName ?? '';
         const itemLimit = config.itemLimit ?? options.defaultItemLimit ?? 16;
-        const sortOrder = config.sortOrder ?? 'Random';
+        const sortOrder = config.sortOrder ?? defaultSortOrder;
         const sortOrderDirection = config.sortOrderDirection ?? 'Ascending';
         const cardFormat = config.cardFormat ?? options.defaultCardFormat ?? 'Poster';
         const order = config.order ?? options.defaultOrder ?? 100;
@@ -1882,6 +1884,7 @@
                 <div class="listItemContent">
                     <div class="listItemBodyText" style="margin-bottom: 0.5em;">Sort Order</div>
                     <select id="${prefix}_sortOrder" class="fld emby-select-withcolor emby-select" style="width: 100%; max-width: 200px;">
+                        ${includeCustomSort ? `<option value="Custom" ${sortOrder === 'Custom' ? 'selected' : ''}>Custom</option>` : ''}
                         <option value="Random" ${sortOrder === 'Random' ? 'selected' : ''}>Random</option>
                         <option value="PremiereDate" ${sortOrder === 'PremiereDate' ? 'selected' : ''}>Premiere Date</option>
                         <option value="DateCreated" ${sortOrder === 'DateCreated' ? 'selected' : ''}>Date Created</option>
@@ -1996,7 +1999,7 @@
                 enabled: !!watchlist.enabled && watchlist.mediaTypes !== 'shows',
                 name: 'Watchlist - Movies',
                 itemLimit: watchlist.itemLimit ?? 16,
-                sortOrder: watchlist.sortOrder ?? 'DateAdded',
+                sortOrder: watchlist.sortOrder ?? 'Custom',
                 sortOrderDirection: watchlist.sortOrderDirection ?? 'Ascending',
                 cardFormat: watchlist.cardFormat ?? 'Poster',
                 order: watchlist.order ?? 60
@@ -2008,7 +2011,7 @@
                 enabled: !!watchlist.enabled && watchlist.mediaTypes !== 'movies',
                 name: 'Watchlist - Shows',
                 itemLimit: watchlist.itemLimit ?? 16,
-                sortOrder: watchlist.sortOrder ?? 'DateAdded',
+                sortOrder: watchlist.sortOrder ?? 'Custom',
                 sortOrderDirection: watchlist.sortOrderDirection ?? 'Ascending',
                 cardFormat: watchlist.cardFormat ?? 'Poster',
                 order: (watchlist.order ?? 60) + 1
@@ -2277,7 +2280,7 @@
                                         ${buildJellyfinCheckbox('homeScreen_watchlist_movies_enabled', watchlistMovies.enabled === true, 'Enabled')}
                                     </div>
                                     <div class="listItemContent" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 0.75em;">
-                                        ${createSectionConfiguration('homeScreen_watchlist_movies', watchlistMovies, { includeName: true, defaultName: 'Watchlist - Movies', defaultOrder: 60 })}
+                                        ${createSectionConfiguration('homeScreen_watchlist_movies', watchlistMovies, { includeName: true, defaultName: 'Watchlist - Movies', defaultOrder: 60, includeCustomSort: true, defaultSortOrder: 'Custom' })}
                                     </div>
                                 </div>
                             </details>
@@ -2294,7 +2297,7 @@
                                         ${buildJellyfinCheckbox('homeScreen_watchlist_shows_enabled', watchlistShows.enabled === true, 'Enabled')}
                                     </div>
                                     <div class="listItemContent" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 0.75em;">
-                                        ${createSectionConfiguration('homeScreen_watchlist_shows', watchlistShows, { includeName: true, defaultName: 'Watchlist - Shows', defaultOrder: 61 })}
+                                        ${createSectionConfiguration('homeScreen_watchlist_shows', watchlistShows, { includeName: true, defaultName: 'Watchlist - Shows', defaultOrder: 61, includeCustomSort: true, defaultSortOrder: 'Custom' })}
                                     </div>
                                 </div>
                             </details>

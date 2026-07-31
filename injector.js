@@ -16,14 +16,15 @@
         if (remoteVersion > localVersion && remoteVersion > 0) {
             console.log('[KefinTweaks] Global reset detected. Clearing user configuration.');
 
-            // Snapshot watchlist meta before wipe so DateAdded / PlayBaseline can be re-applied
+            // Snapshot watchlist meta before wipe so DateAdded / PlayBaseline / SortOrder can be re-applied
 			const preservedWatchlistMeta = {};
 			const rememberWatchlistMeta = (id, meta) => {
 				if (!id || !meta) return;
-				if (!meta.WatchlistDateAdded && !meta.WatchlistPlayBaseline) return;
+				if (!meta.WatchlistDateAdded && !meta.WatchlistPlayBaseline && typeof meta.WatchlistSortOrder !== 'number') return;
 				if (!preservedWatchlistMeta[id]) preservedWatchlistMeta[id] = {};
 				if (meta.WatchlistDateAdded) preservedWatchlistMeta[id].WatchlistDateAdded = meta.WatchlistDateAdded;
 				if (meta.WatchlistPlayBaseline) preservedWatchlistMeta[id].WatchlistPlayBaseline = meta.WatchlistPlayBaseline;
+				if (typeof meta.WatchlistSortOrder === 'number') preservedWatchlistMeta[id].WatchlistSortOrder = meta.WatchlistSortOrder;
 			};
 
 			try {

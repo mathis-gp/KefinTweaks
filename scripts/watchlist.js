@@ -3714,16 +3714,21 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 
 	function recordWatchlistMetaOnAdd(itemId, userData) {
 		if (!itemId) return null;
-		const existing = getWatchlistItemMeta(itemId);
-		if (existing?.WatchlistDateAdded && existing?.WatchlistPlayBaseline) return existing;
-		return upsertWatchlistItemMeta(itemId, {
-			WatchlistDateAdded: existing?.WatchlistDateAdded || new Date().toISOString(),
-			WatchlistPlayBaseline: existing?.WatchlistPlayBaseline || {
+		const existing = getWatchlistItemMeta(itemId) || {};
+		const patch = {};
+		if (!existing.WatchlistDateAdded) patch.WatchlistDateAdded = new Date().toISOString();
+		if (!existing.WatchlistPlayBaseline) {
+			patch.WatchlistPlayBaseline = {
 				played: !!(userData && userData.Played),
 				playCount: (userData && userData.PlayCount) || 0,
 				lastPlayedDate: (userData && userData.LastPlayedDate) || null
-			}
-		});
+			};
+		}
+		if (typeof existing.WatchlistSortOrder !== 'number') {
+			patch.WatchlistSortOrder = getNextWatchlistSortOrder();
+		}
+		if (!Object.keys(patch).length) return existing;
+		return upsertWatchlistItemMeta(itemId, patch);
 	}
 
 	function attachWatchlistMeta(item, index, total) {
@@ -3732,6 +3737,7 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 		if (existing?.WatchlistDateAdded && existing?.WatchlistPlayBaseline) {
 			item.WatchlistDateAdded = existing.WatchlistDateAdded;
 			item.WatchlistPlayBaseline = existing.WatchlistPlayBaseline;
+			if (typeof existing.WatchlistSortOrder === 'number') item.WatchlistSortOrder = existing.WatchlistSortOrder;
 			return item;
 		}
 
@@ -3747,6 +3753,7 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 		});
 		item.WatchlistDateAdded = meta.WatchlistDateAdded;
 		item.WatchlistPlayBaseline = meta.WatchlistPlayBaseline;
+		if (typeof meta.WatchlistSortOrder === 'number') item.WatchlistSortOrder = meta.WatchlistSortOrder;
 		return item;
 	}
 
@@ -3785,10 +3792,32 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 		return direction === 'asc' ? result : -result;
 	}
 
+	function sortWatchlistByCustomOrder(a, b, direction = 'asc') {
+		const aHas = typeof a.WatchlistSortOrder === 'number';
+		const bHas = typeof b.WatchlistSortOrder === 'number';
+		if (aHas && bHas) {
+			const result = a.WatchlistSortOrder - b.WatchlistSortOrder;
+			if (result !== 0) return direction === 'asc' ? result : -result;
+		} else if (aHas) {
+			return -1;
+		} else if (bHas) {
+			return 1;
+		}
+		const dateResult = sortWatchlistByDateAdded(a, b, 'asc');
+		if (dateResult !== 0) return direction === 'asc' ? dateResult : -dateResult;
+		const nameResult = (a.Name || '').localeCompare(b.Name || '');
+		return direction === 'asc' ? nameResult : -nameResult;
+	}
+
 	const WATCHLIST_SORT_OPTIONS = {
+		custom: {
+			label: 'Custom',
+			default: true,
+			defaultDirection: 'asc',
+			sortFn: (a, b, direction) => sortWatchlistByCustomOrder(a, b, direction)
+		},
 		dateAdded: {
 			label: 'Date Added',
-			default: true,
 			defaultDirection: 'asc',
 			sortFn: (a, b, direction) => sortWatchlistByDateAdded(a, b, direction)
 		},
@@ -3811,7 +3840,7 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 		}
 		const savedSort = localStorage.getItem('kefinTweaks_watchlistSort');
 		if (savedSort && WATCHLIST_SORT_OPTIONS[savedSort]) return savedSort;
-		return 'dateAdded';
+		return 'custom';
 	}
 
 	function getCurrentWatchlistSortDirection() {
@@ -3838,6 +3867,7 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 			? data.slice()
 			: (Array.isArray(data?.Items) ? data.Items.slice() : []);
 		items.forEach((item, index) => attachWatchlistMeta(item, index, items.length));
+		ensureWatchlistSortOrdersForItems(items);
 		return applyWatchlistSorting(items);
 	}
 
@@ -3922,6 +3952,162 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 		);
 	}
 
+	function getNextWatchlistSortOrder() {
+		let max = -1;
+		const map = readWatchlistItemMetaMap();
+		Object.keys(map).forEach(id => {
+			const order = map[id]?.WatchlistSortOrder;
+			if (typeof order === 'number' && order > max) max = order;
+		});
+		return max + 1;
+	}
+
+	function ensureWatchlistSortOrdersForItems(items) {
+		if (!Array.isArray(items) || items.length === 0) return false;
+		const map = readWatchlistItemMetaMap();
+		const missing = [];
+		items.forEach(item => {
+			if (!item?.Id) return;
+			if (typeof item.WatchlistSortOrder === 'number') return;
+			if (typeof map[item.Id]?.WatchlistSortOrder === 'number') {
+				item.WatchlistSortOrder = map[item.Id].WatchlistSortOrder;
+				return;
+			}
+			missing.push(item);
+		});
+		if (!missing.length) return false;
+
+		missing.sort((a, b) => sortWatchlistByDateAdded(a, b, 'asc'));
+		let next = -1;
+		Object.keys(map).forEach(id => {
+			const order = map[id]?.WatchlistSortOrder;
+			if (typeof order === 'number' && order > next) next = order;
+		});
+		missing.forEach(item => {
+			next += 1;
+			item.WatchlistSortOrder = next;
+			if (!map[item.Id]) map[item.Id] = {};
+			map[item.Id].WatchlistSortOrder = next;
+			if (item.WatchlistDateAdded) map[item.Id].WatchlistDateAdded = item.WatchlistDateAdded;
+			if (item.WatchlistPlayBaseline) map[item.Id].WatchlistPlayBaseline = item.WatchlistPlayBaseline;
+		});
+		writeWatchlistItemMetaMap(map);
+		scheduleWatchlistMetaServerSync();
+		return true;
+	}
+
+	function loadWatchlistSortableLibrary() {
+		if (typeof window.Sortable === 'function') return Promise.resolve(window.Sortable);
+		return new Promise((resolve, reject) => {
+			const existing = document.querySelector('script[data-kefin-sortable]');
+			if (existing) {
+				existing.addEventListener('load', () => resolve(window.Sortable));
+				existing.addEventListener('error', reject);
+				return;
+			}
+			const script = document.createElement('script');
+			script.src = 'https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js';
+			script.async = true;
+			script.setAttribute('data-kefin-sortable', 'true');
+			script.onload = () => resolve(window.Sortable);
+			script.onerror = () => reject(new Error('Failed to load Sortable'));
+			document.head.appendChild(script);
+		});
+	}
+
+	function destroyWatchlistSortable(itemsContainer) {
+		if (!itemsContainer?._kefinWatchlistSortable) return;
+		try {
+			itemsContainer._kefinWatchlistSortable.destroy();
+		} catch (err) {
+			// ignore
+		}
+		itemsContainer._kefinWatchlistSortable = null;
+	}
+
+	function getWatchlistPageLayout() {
+		const watchlistSection = getWatchlistSection();
+		const watchlistTab = watchlistSection?.querySelector('div[data-tab="watchlist"]');
+		return watchlistTab?.getAttribute('data-layout') || 'Default';
+	}
+
+	function commitWatchlistOrderFromDom(itemsContainer) {
+		if (!itemsContainer) return;
+		const visualIds = Array.from(itemsContainer.querySelectorAll(':scope > .card[data-id], :scope > .watchlist-reorder-card[data-id]'))
+			.map(card => card.getAttribute('data-id'))
+			.filter(Boolean);
+		if (!visualIds.length) return;
+
+		const descending = getCurrentWatchlistSortDirection() === 'desc';
+		const orderedIds = descending ? [...visualIds].reverse() : visualIds;
+		const map = readWatchlistItemMetaMap();
+		orderedIds.forEach((id, index) => {
+			if (!map[id]) map[id] = {};
+			map[id].WatchlistSortOrder = index;
+			const item = Object.values(watchlistItemsByType).flat().find(entry => entry?.Id === id);
+			if (item) item.WatchlistSortOrder = index;
+		});
+		writeWatchlistItemMetaMap(map);
+		scheduleWatchlistMetaServerSync();
+		LOG(`Saved custom watchlist order (${orderedIds.length} items)`);
+	}
+
+	function setupWatchlistCustomReorder(itemsContainer) {
+		if (!itemsContainer) return;
+		const isCustom = getCurrentWatchlistSortOrder() === 'custom';
+		const layout = getWatchlistPageLayout();
+		const isList = layout === 'List';
+		itemsContainer.classList.toggle('watchlist-custom-sortable', isCustom);
+		itemsContainer.classList.toggle('watchlist-custom-sortable-list', isCustom && isList);
+		itemsContainer.classList.toggle('watchlist-custom-sortable-cards', isCustom && !isList);
+
+		if (!isCustom) {
+			destroyWatchlistSortable(itemsContainer);
+			itemsContainer.querySelectorAll('.listViewDragHandle').forEach(el => el.remove());
+			itemsContainer.querySelectorAll('.card[data-id]').forEach(card => {
+				card.classList.remove('watchlist-reorder-card', 'watchlist-reorder-card-list');
+			});
+			return;
+		}
+
+		itemsContainer.querySelectorAll('.card[data-id]').forEach(card => {
+			card.classList.add('watchlist-reorder-card');
+			card.classList.toggle('watchlist-reorder-card-list', isList);
+			if (card.querySelector('.listViewDragHandle')) return;
+			const handle = document.createElement('button');
+			handle.type = 'button';
+			handle.className = 'listViewDragHandle paper-icon-button-light watchlist-card-drag-handle';
+			handle.title = 'Drag to reorder';
+			handle.innerHTML = '<span class="material-icons drag_handle" aria-hidden="true"></span>';
+			handle.addEventListener('click', (e) => {
+				e.preventDefault();
+				e.stopPropagation();
+			});
+			card.insertBefore(handle, card.firstChild);
+		});
+
+		if (itemsContainer._kefinWatchlistSortable) return;
+		loadWatchlistSortableLibrary().then((Sortable) => {
+			if (typeof Sortable !== 'function' || !itemsContainer.isConnected) return;
+			if (getCurrentWatchlistSortOrder() !== 'custom') return;
+			destroyWatchlistSortable(itemsContainer);
+			itemsContainer._kefinWatchlistSortable = new Sortable(itemsContainer, {
+				draggable: '.watchlist-reorder-card',
+				handle: '.listViewDragHandle',
+				animation: 150,
+				onEnd: () => commitWatchlistOrderFromDom(itemsContainer)
+			});
+		}).catch(err => {
+			ERR('Could not enable watchlist drag reorder:', err);
+		});
+	}
+
+	function refreshWatchlistCustomReorderForLayout() {
+		const host = getWatchlistProgressiveHost();
+		if (!host) return;
+		host.querySelectorAll('.itemsContainer').forEach(itemsContainer => setupWatchlistCustomReorder(itemsContainer));
+	}
+
 	async function renderWatchlistProgressive(forceRefresh = false) {
 		const host = getWatchlistProgressiveHost();
 		if (!host) {
@@ -3975,6 +4161,7 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 		);
 		if (totalItems === 0) showEmptyWatchlistMessage();
 		else hideEmptyWatchlistMessage();
+		refreshWatchlistCustomReorderForLayout();
 	}
 
 	// Function to render the complete watchlist HTML structure
@@ -5528,6 +5715,9 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 			}
 			if (!existing?.WatchlistPlayBaseline && meta.WatchlistPlayBaseline) {
 				patch.WatchlistPlayBaseline = meta.WatchlistPlayBaseline;
+			}
+			if (typeof existing?.WatchlistSortOrder !== 'number' && typeof meta.WatchlistSortOrder === 'number') {
+				patch.WatchlistSortOrder = meta.WatchlistSortOrder;
 			}
 			if (Object.keys(patch).length) upsertWatchlistItemMeta(id, patch);
 		});
@@ -7980,6 +8170,7 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 					}
 					
 					LOG(`Layout switched to: ${newLayout}`);
+					refreshWatchlistCustomReorderForLayout();
 				}
 			});
 			LOG('Layout toggle button setup complete');
