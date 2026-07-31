@@ -91,7 +91,7 @@
 
             const response = await ApiClient.getItems(userId, {
                 ParentId: playlistId,
-                Fields: 'PrimaryImageAspectRatio,DateCreated,CommunityRating,CriticRating,SortName,PremiereDate,UserData'
+                Fields: 'PrimaryImageAspectRatio,DateCreated,CommunityRating,CriticRating,SortName,PremiereDate,ProductionYear,UserData'
             });
 
             return response.Items || [];
@@ -216,15 +216,112 @@
     }
 
     /**
+     * Resolve display year for a playlist item
+     * @param {Object} item - Jellyfin item
+     * @returns {number|null}
+     */
+    function getItemYear(item) {
+        if (!item) return null;
+        if (item.PremiereDate) {
+            const date = new Date(item.PremiereDate);
+            if (!isNaN(date.getTime())) {
+                return date.getFullYear();
+            }
+        }
+        if (item.ProductionYear) return item.ProductionYear;
+        return null;
+    }
+
+    /**
+     * Insert release year just below each playlist item title
+     * @param {string} playlistId - Playlist item ID
+     */
+    async function addReleaseYearsToPlaylistItems(playlistId) {
+        let data = playlistData.get(playlistId);
+        if (!data?.items?.length) {
+            const items = await fetchPlaylistChildren(playlistId);
+            if (!items.length) {
+                return;
+            }
+            data = {
+                items,
+                itemsContainer: getPlaylistItemsContainer()
+            };
+            playlistData.set(playlistId, data);
+        }
+
+        const itemsContainer = getPlaylistItemsContainer() || data.itemsContainer;
+        if (!itemsContainer) {
+            return;
+        }
+
+        const itemsById = new Map(data.items.map(item => [item.Id, item]));
+        const listItems = itemsContainer.querySelectorAll('.listItem[data-playlistitemid]');
+
+        listItems.forEach((listItem) => {
+            if (listItem.querySelector('.kt-playlist-item-year')) {
+                return;
+            }
+
+            const itemId = listItem.getAttribute('data-playlistitemid');
+            const year = getItemYear(itemsById.get(itemId));
+            if (!year) {
+                return;
+            }
+
+            const listItemBody = listItem.querySelector('.listItemBody');
+            if (!listItemBody) {
+                return;
+            }
+
+            // In playlist list view the title is often the first .listItemBodyText
+            // and already has the "secondary" class (no separate primary title node).
+            const titleEl = listItemBody.querySelector('.listItemBodyText:not(.kt-playlist-item-year)');
+            if (!titleEl) {
+                return;
+            }
+
+            const yearEl = document.createElement('div');
+            yearEl.className = 'secondary listItemBodyText kt-playlist-item-year';
+            yearEl.style.color = 'hsla(0,0%,100%,.5)';
+            yearEl.style.fontSize = '0.9em';
+            yearEl.textContent = String(year);
+
+            titleEl.insertAdjacentElement('afterend', yearEl);
+
+            // Ensure Jellyfin list layout accounts for the extra line
+            const textLineCount = listItemBody.querySelectorAll('.listItemBodyText').length;
+            if (textLineCount >= 3) {
+                listItemBody.classList.add('three-line');
+                listItemBody.classList.remove('two-line');
+            } else if (textLineCount >= 2) {
+                listItemBody.classList.add('two-line');
+            }
+        });
+    }
+
+    /**
      * Sort playlist items and update DOM
      * @param {string} playlistId - Playlist item ID
      */
     async function sortPlaylistItems(playlistId) {
         const sortedItems = await getSortedPlaylistItems(playlistId);
 
+        // Keep playlistData in sync for year injection / later sorts
+        const existingData = playlistData.get(playlistId);
+        if (existingData) {
+            existingData.items = sortedItems;
+        } else {
+            playlistData.set(playlistId, {
+                items: sortedItems,
+                itemsContainer: getPlaylistItemsContainer()
+            });
+        }
+
         // Reorder DOM
         ignoreNextMutation = true;
         reorderListItems(getPlaylistItemsContainer(), sortedItems);
+        await addReleaseYearsToPlaylistItems(playlistId);
         
         // Update play button text and "Play from beginning" button visibility in case first item changed
         const activePage = document.querySelector('.libraryPage:not(.hide)');
@@ -807,6 +904,7 @@
         }
 
         sortPlaylistItems(playlistId);
+        addReleaseYearsToPlaylistItems(playlistId);
     }
 
     /**
@@ -827,12 +925,6 @@
         playlistObserver = new MutationObserver((mutations) => {
             if (ignoreNextMutation) {
                 ignoreNextMutation = false;
-                return;
-            }
-
-            const sortKey = getCurrentSort(playlistId);
-
-            if (sortKey === 'default') {
                 return;
             }
 
@@ -864,8 +956,14 @@
                 // Debounce to avoid multiple rapid re-applications
                 clearTimeout(debounceTimer);
                 debounceTimer = setTimeout(() => {
-                    LOG('Playlist container re-rendered, re-applying sort for:', playlistId);
-                    reapplyPlaylistSorting(playlistId, playlistItemsContainer);
+                    const sortKey = getCurrentSort(playlistId);
+                    if (sortKey !== 'default') {
+                        LOG('Playlist container re-rendered, re-applying sort for:', playlistId);
+                        reapplyPlaylistSorting(playlistId, playlistItemsContainer);
+                    } else {
+                        LOG('Playlist container re-rendered, re-applying release years for:', playlistId);
+                        addReleaseYearsToPlaylistItems(playlistId);
+                    }
                 }, 300); // 300ms debounce
             }
         });
@@ -1217,6 +1315,12 @@
             libraryPage.dataset.kefinPlaylist = 'true';
             modifyPlaylistItemClicks();
             addPlayButtons();
+
+            const playlistId = playlistItems[0]?.getAttribute('data-playlistid');
+            if (playlistId) {
+                addReleaseYearsToPlaylistItems(playlistId);
+            }
+
             LOG('Playlist page modifications complete');
         };
         
