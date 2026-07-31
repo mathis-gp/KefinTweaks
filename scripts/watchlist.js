@@ -129,6 +129,9 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 			if (item.WatchlistPlayBaseline) {
 				optimizedData.WatchlistPlayBaseline = item.WatchlistPlayBaseline;
 			}
+			if (typeof item.WatchlistSortOrder === 'number') {
+				optimizedData.WatchlistSortOrder = item.WatchlistSortOrder;
+			}
 			return optimizedData;
 		});
 	}
@@ -311,7 +314,7 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 		sortBtn.id = 'watchlist-sort-btn';
 
 		const currentSort = getCurrentWatchlistSortOrder();
-		const currentLabel = WATCHLIST_SORT_OPTIONS[currentSort]?.label || 'Date Added';
+		const currentLabel = WATCHLIST_SORT_OPTIONS[currentSort]?.label || 'Custom';
 
 		sortBtn.innerHTML = `
 			<span class="material-icons sort"></span>
@@ -676,7 +679,7 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 		if (sortBtn) {
 			const currentDirection = direction || getCurrentWatchlistSortDirection();
 			const directionText = currentDirection === 'asc' ? '↑' : '↓';
-			const label = WATCHLIST_SORT_OPTIONS[sortKey]?.label || 'Date Added';
+			const label = WATCHLIST_SORT_OPTIONS[sortKey]?.label || 'Custom';
 			const labelSpan = sortBtn.querySelector('.sort-label');
 			if (labelSpan) {
 				labelSpan.textContent = `${label} ${directionText}`;
@@ -1110,7 +1113,7 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 	const tabStates = {
 		progress: { currentPage: 1, currentSearch: '', currentSort: 'lastWatched', currentDirection: 'desc', hasContent: false, lastDataHash: '', isFetching: false, isDataFetched: false, isRendering: false },
 		history: { currentPage: 1, currentSearch: '', currentSort: 'lastWatched', currentDirection: 'desc', hasContent: false, lastDataHash: '', isFetching: false, isDataFetched: false },
-		watchlist: { currentPage: 1, currentSearch: '', currentSort: 'dateAdded', currentDirection: 'asc', hasContent: false, lastDataHash: '', isFetching: false, isDataFetched: false },
+		watchlist: { currentPage: 1, currentSearch: '', currentSort: 'custom', currentDirection: 'asc', hasContent: false, lastDataHash: '', isFetching: false, isDataFetched: false },
 		statistics: { currentPage: 1, currentSearch: '', hasContent: false, lastDataHash: '', isFetching: false, isDataFetched: false }
 	};
 
@@ -1794,8 +1797,9 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 				sortDirection: params.get('sortDirection') || 'desc',
 				movieSort: params.get('movieSort') || 'lastWatched',
 				movieSortDirection: params.get('movieSortDirection') || 'desc',
-				watchlistSort: params.get('watchlistSort') || 'dateAdded',
-				watchlistSortDirection: params.get('watchlistSortDirection') || 'asc'
+				// Empty when absent so localStorage / built-in defaults can apply
+				watchlistSort: params.get('watchlistSort') || '',
+				watchlistSortDirection: params.get('watchlistSortDirection') || ''
 			};
 		}
 		
@@ -1809,8 +1813,8 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 			sortDirection: 'desc',
 			movieSort: 'lastWatched',
 			movieSortDirection: 'desc',
-			watchlistSort: 'dateAdded',
-			watchlistSortDirection: 'asc'
+			watchlistSort: '',
+			watchlistSortDirection: ''
 		};
 	}
 
@@ -2008,9 +2012,14 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 
 	// Watchlist-specific sorting configuration
 	const WATCHLIST_SORT_OPTIONS = {
+		custom: {
+			label: 'Custom',
+			default: true,
+			defaultDirection: 'asc',
+			sortFn: (a, b, direction) => sortWatchlistByCustomOrder(a, b, direction)
+		},
 		dateAdded: {
 			label: 'Date Added',
-			default: true,
 			defaultDirection: 'asc',
 			sortFn: (a, b, direction) => sortWatchlistByDateAdded(a, b, direction)
 		},
@@ -2249,7 +2258,7 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 			return savedSort;
 		}
 
-		return 'dateAdded';
+		return 'custom';
 	}
 
 	function getCurrentWatchlistSortDirection() {
@@ -2265,6 +2274,29 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 
 		const currentSort = getCurrentWatchlistSortOrder();
 		return WATCHLIST_SORT_OPTIONS[currentSort]?.defaultDirection || 'asc';
+	}
+
+	function sortWatchlistByCustomOrder(a, b, direction = 'asc') {
+		const aHas = typeof a.WatchlistSortOrder === 'number';
+		const bHas = typeof b.WatchlistSortOrder === 'number';
+		if (aHas && bHas) {
+			const result = a.WatchlistSortOrder - b.WatchlistSortOrder;
+			if (result !== 0) {
+				return direction === 'asc' ? result : -result;
+			}
+		} else if (aHas) {
+			return -1;
+		} else if (bHas) {
+			return 1;
+		} else {
+			// Fallback for items not yet assigned a custom order
+			const dateResult = sortWatchlistByDateAdded(a, b, 'asc');
+			if (dateResult !== 0) {
+				return direction === 'asc' ? dateResult : -dateResult;
+			}
+		}
+		const nameResult = (a.Name || '').localeCompare(b.Name || '');
+		return direction === 'asc' ? nameResult : -nameResult;
 	}
 
 	function sortWatchlistByDateAdded(a, b, direction = 'asc') {
@@ -2562,14 +2594,15 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 		try {
 			const items = watchlistCache[section].data;
 
-			// Ensure date-added + play baseline props on each entry
+			// Ensure date-added + play baseline + custom order props on each entry
 			items.forEach((item, index) => {
 				const fallback = item.WatchlistDateAdded || new Date(Date.now() - (items.length - index) * 1000).toISOString();
 				ensureWatchlistDateAdded(item, fallback);
 				ensureWatchlistPlayBaseline(item);
 			});
+			ensureWatchlistSortOrdersForItems(items);
 
-			// Sort with current watchlist sort (default: date added ascending)
+			// Sort with current watchlist sort (default: custom)
 			const sortedItems = applyWatchlistSorting(items);
 			watchlistCache[section].data = sortedItems;
 			
@@ -4943,6 +4976,11 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 				if (incoming.WatchlistPlayBaseline && !out[id].WatchlistPlayBaseline) {
 					out[id].WatchlistPlayBaseline = incoming.WatchlistPlayBaseline;
 				}
+
+				// Last map wins for sort order (local/preserve override while editing)
+				if (typeof incoming.WatchlistSortOrder === 'number') {
+					out[id].WatchlistSortOrder = incoming.WatchlistSortOrder;
+				}
 			});
 		});
 		return out;
@@ -5048,6 +5086,14 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 			const preserveMeta = getPreservedWatchlistMetaFromStorage();
 			const merged = mergeWatchlistMetaMaps(serverMeta, localMeta, preserveMeta);
 
+			// Prefer server sort orders for cross-client consistency when present
+			Object.keys(serverMeta || {}).forEach(id => {
+				if (typeof serverMeta[id]?.WatchlistSortOrder === 'number') {
+					if (!merged[id]) merged[id] = {};
+					merged[id].WatchlistSortOrder = serverMeta[id].WatchlistSortOrder;
+				}
+			});
+
 			persistLocalWatchlistItemMetaMap(merged);
 			_watchlistMetaFromServerLoaded = true;
 
@@ -5060,6 +5106,7 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 				if (!s) return true;
 				if (m.WatchlistDateAdded && m.WatchlistDateAdded !== s.WatchlistDateAdded) return true;
 				if (m.WatchlistPlayBaseline && !s.WatchlistPlayBaseline) return true;
+				if (typeof m.WatchlistSortOrder === 'number' && typeof s.WatchlistSortOrder !== 'number') return true;
 				return false;
 			}) || mergedKeys.length > serverKeys.length;
 
@@ -5116,6 +5163,10 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 			if (item.WatchlistPlayBaseline && !metaById[item.Id].WatchlistPlayBaseline) {
 				metaById[item.Id].WatchlistPlayBaseline = item.WatchlistPlayBaseline;
 			}
+			if (typeof item.WatchlistSortOrder === 'number' &&
+				typeof metaById[item.Id].WatchlistSortOrder !== 'number') {
+				metaById[item.Id].WatchlistSortOrder = item.WatchlistSortOrder;
+			}
 		};
 
 		const mergeMetaMap = (map) => {
@@ -5132,6 +5183,9 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 				}
 				if (meta.WatchlistPlayBaseline && !metaById[id].WatchlistPlayBaseline) {
 					metaById[id].WatchlistPlayBaseline = meta.WatchlistPlayBaseline;
+				}
+				if (typeof meta.WatchlistSortOrder === 'number') {
+					metaById[id].WatchlistSortOrder = meta.WatchlistSortOrder;
 				}
 			});
 		};
@@ -5164,7 +5218,86 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 		if (!meta) return item;
 		if (meta.WatchlistDateAdded) item.WatchlistDateAdded = meta.WatchlistDateAdded;
 		if (meta.WatchlistPlayBaseline) item.WatchlistPlayBaseline = meta.WatchlistPlayBaseline;
+		if (typeof meta.WatchlistSortOrder === 'number') item.WatchlistSortOrder = meta.WatchlistSortOrder;
 		return item;
+	}
+
+	function getNextWatchlistSortOrder() {
+		let max = -1;
+		const map = getLocalWatchlistItemMetaMap();
+		Object.keys(map).forEach(id => {
+			const order = map[id]?.WatchlistSortOrder;
+			if (typeof order === 'number' && order > max) max = order;
+		});
+		Object.keys(watchlistCache || {}).forEach(section => {
+			(watchlistCache[section]?.data || []).forEach(item => {
+				if (typeof item.WatchlistSortOrder === 'number' && item.WatchlistSortOrder > max) {
+					max = item.WatchlistSortOrder;
+				}
+			});
+		});
+		return max + 1;
+	}
+
+	function ensureWatchlistSortOrder(item, fallbackOrder = null) {
+		if (!item) return null;
+		if (typeof item.WatchlistSortOrder === 'number') return item.WatchlistSortOrder;
+		const fromMap = getLocalWatchlistItemMetaMap()[item.Id];
+		if (fromMap && typeof fromMap.WatchlistSortOrder === 'number') {
+			item.WatchlistSortOrder = fromMap.WatchlistSortOrder;
+			return item.WatchlistSortOrder;
+		}
+		item.WatchlistSortOrder = typeof fallbackOrder === 'number' ? fallbackOrder : getNextWatchlistSortOrder();
+		return item.WatchlistSortOrder;
+	}
+
+	// Assign missing custom orders (Date Added ASC baseline), persist in one batch
+	function ensureWatchlistSortOrdersForItems(items) {
+		if (!Array.isArray(items) || items.length === 0) return false;
+
+		const map = getLocalWatchlistItemMetaMap();
+		let changed = false;
+		const missing = [];
+
+		items.forEach(item => {
+			if (!item || !item.Id) return;
+			if (typeof item.WatchlistSortOrder === 'number') return;
+			if (typeof map[item.Id]?.WatchlistSortOrder === 'number') {
+				item.WatchlistSortOrder = map[item.Id].WatchlistSortOrder;
+				return;
+			}
+			missing.push(item);
+		});
+
+		if (missing.length === 0) return false;
+
+		missing.sort((a, b) => sortWatchlistByDateAdded(a, b, 'asc'));
+		let next = -1;
+		Object.keys(map).forEach(id => {
+			const order = map[id]?.WatchlistSortOrder;
+			if (typeof order === 'number' && order > next) next = order;
+		});
+		items.forEach(item => {
+			if (typeof item.WatchlistSortOrder === 'number' && item.WatchlistSortOrder > next) {
+				next = item.WatchlistSortOrder;
+			}
+		});
+
+		missing.forEach(item => {
+			next += 1;
+			item.WatchlistSortOrder = next;
+			if (!map[item.Id]) map[item.Id] = {};
+			map[item.Id].WatchlistSortOrder = next;
+			if (item.WatchlistDateAdded) map[item.Id].WatchlistDateAdded = item.WatchlistDateAdded;
+			if (item.WatchlistPlayBaseline) map[item.Id].WatchlistPlayBaseline = item.WatchlistPlayBaseline;
+			changed = true;
+		});
+
+		if (changed) {
+			persistLocalWatchlistItemMetaMap(map);
+			scheduleWatchlistMetaServerSync();
+		}
+		return changed;
 	}
 
 	function setWatchlistPlayBaseline(item, userData) {
@@ -5247,9 +5380,11 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 				if (item) {
 					ensureWatchlistDateAdded(item);
 					setWatchlistPlayBaseline(item, item.UserData || {});
+					ensureWatchlistSortOrder(item);
 					upsertWatchlistItemMeta(itemId, {
 						WatchlistDateAdded: item.WatchlistDateAdded,
-						WatchlistPlayBaseline: item.WatchlistPlayBaseline
+						WatchlistPlayBaseline: item.WatchlistPlayBaseline,
+						WatchlistSortOrder: item.WatchlistSortOrder
 					});
 
 					// Add to cache if not already present
@@ -5267,6 +5402,7 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 						const existing = watchlistCache[sectionName].data[existingIndex];
 						existing.WatchlistDateAdded = item.WatchlistDateAdded;
 						existing.WatchlistPlayBaseline = item.WatchlistPlayBaseline;
+						existing.WatchlistSortOrder = item.WatchlistSortOrder;
 					}
 				}
 			} else {
@@ -7124,6 +7260,7 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 		if (compareDataIds(container, items)) {
 			LOG(`Skipping ${type} render - content unchanged (${items.length} items)`);
 			container.style.display = '';
+			setupWatchlistCustomReorder(container, sectionName);
 			return { type, itemCount: items.length };
 		}
 		
@@ -7135,6 +7272,7 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 			const scrollableContainer = window.cardBuilder.renderCards(items, getTypeDisplayName(type), null);
 			container.innerHTML = '';
 			container.appendChild(scrollableContainer);
+			setupWatchlistCustomReorder(container, sectionName);
 			
 			LOG(`Rendered ${items.length} ${type} items using cardBuilder from cache`);
 		} else {
@@ -7144,6 +7282,305 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 		}
 		
 		return { type, itemCount: items.length };
+	}
+
+	// Load SortableJS the same way Jellyfin playlists do (AMD `sortable` module)
+	function loadWatchlistSortableLibrary() {
+		if (typeof window.Sortable === 'function') {
+			return Promise.resolve(window.Sortable);
+		}
+
+		const normalize = (mod) => {
+			const Sortable = mod && (mod.default || mod.Sortable || mod);
+			return typeof Sortable === 'function' ? Sortable : null;
+		};
+
+		const loadFromCdn = () => new Promise((resolve, reject) => {
+			const existing = document.querySelector('script[data-kefin-sortable]');
+			if (existing) {
+				if (typeof window.Sortable === 'function') {
+					resolve(window.Sortable);
+					return;
+				}
+				existing.addEventListener('load', () => {
+					if (typeof window.Sortable === 'function') resolve(window.Sortable);
+					else reject(new Error('Sortable CDN script loaded without global'));
+				});
+				existing.addEventListener('error', reject);
+				return;
+			}
+			const script = document.createElement('script');
+			script.src = 'https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js';
+			script.async = true;
+			script.setAttribute('data-kefin-sortable', 'true');
+			script.onload = () => {
+				if (typeof window.Sortable === 'function') resolve(window.Sortable);
+				else reject(new Error('Sortable CDN script loaded without global'));
+			};
+			script.onerror = () => reject(new Error('Failed to load Sortable from CDN'));
+			document.head.appendChild(script);
+		});
+
+		// Jellyfin web AMD / requirejs
+		if (typeof window.require === 'function') {
+			return new Promise((resolve) => {
+				const tryNames = ['sortable', 'sortablejs'];
+				const tryNext = (index) => {
+					if (index >= tryNames.length) {
+						loadFromCdn().then(resolve).catch(() => resolve(null));
+						return;
+					}
+					try {
+						window.require([tryNames[index]], (mod) => {
+							const Sortable = normalize(mod);
+							if (Sortable) {
+								window.Sortable = Sortable;
+								resolve(Sortable);
+							} else {
+								tryNext(index + 1);
+							}
+						}, () => tryNext(index + 1));
+					} catch (_) {
+						tryNext(index + 1);
+					}
+				};
+				tryNext(0);
+			}).then((Sortable) => {
+				if (Sortable) return Sortable;
+				return loadFromCdn();
+			});
+		}
+
+		return loadFromCdn();
+	}
+
+	function destroyWatchlistSortable(itemsContainer) {
+		if (!itemsContainer) return;
+
+		if (typeof itemsContainer.enableDragReordering === 'function' && itemsContainer.sortable) {
+			itemsContainer.enableDragReordering(false);
+		}
+		if (itemsContainer._kefinWatchlistSortable) {
+			try {
+				itemsContainer._kefinWatchlistSortable.destroy();
+			} catch (_) {
+				// ignore
+			}
+			itemsContainer._kefinWatchlistSortable = null;
+		}
+		itemsContainer.classList.remove('watchlist-drop-target-active');
+		document.documentElement.classList.remove('watchlist-is-dragging');
+		document.body.classList.remove('watchlist-is-dragging');
+		if (itemsContainer._kefinWatchlistItemDropHandler) {
+			itemsContainer.removeEventListener('itemdrop', itemsContainer._kefinWatchlistItemDropHandler);
+			itemsContainer._kefinWatchlistItemDropHandler = null;
+		}
+	}
+
+	function getWatchlistPageLayout() {
+		const watchlistSection = getWatchlistSection();
+		const watchlistTab = watchlistSection?.querySelector('div[data-tab="watchlist"]');
+		return watchlistTab?.getAttribute('data-layout') || 'Default';
+	}
+
+	function applyWatchlistCustomReorderLayout(itemsContainer, layout) {
+		if (!itemsContainer) return;
+		const isList = layout === 'List';
+		itemsContainer.classList.toggle('watchlist-custom-sortable-list', isList);
+		itemsContainer.classList.toggle('watchlist-custom-sortable-cards', !isList);
+
+		if (isList) {
+			// Voluntary List mode: column of rows, grab still available
+			itemsContainer.style.cssText = 'display: flex; flex-direction: column; flex-wrap: nowrap; gap: 0; white-space: normal; transform: none !important; transition: none !important;';
+		} else {
+			// Card/grid mode: posters with handle above
+			itemsContainer.style.cssText = 'display: flex; flex-wrap: wrap; gap: 12px; white-space: normal; transform: none !important; transition: none !important;';
+		}
+	}
+
+	function refreshWatchlistCustomReorderForLayout() {
+		if (getCurrentWatchlistSortOrder() !== 'custom') return;
+		const watchlistSection = getWatchlistSection();
+		if (!watchlistSection) return;
+
+		const sections = [
+			['.watchlist-movies', 'movies'],
+			['.watchlist-series', 'series'],
+			['.watchlist-seasons', 'seasons'],
+			['.watchlist-episodes', 'episodes'],
+			['.watchlist-videos', 'videos'],
+			['.watchlist-boxsets', 'boxsets'],
+			['.watchlist-playlists', 'playlists']
+		];
+		sections.forEach(([selector, sectionName]) => {
+			const container = watchlistSection.querySelector(selector);
+			if (container) setupWatchlistCustomReorder(container, sectionName);
+		});
+	}
+
+	// Drag reorder when Custom sort is active — works in Card and List layouts
+	function setupWatchlistCustomReorder(container, sectionName) {
+		if (!container || !sectionName) return;
+		const itemsContainer = container.querySelector('.itemsContainer');
+		if (!itemsContainer) return;
+
+		const isCustom = getCurrentWatchlistSortOrder() === 'custom';
+		const layout = getWatchlistPageLayout();
+		itemsContainer.classList.toggle('watchlist-custom-sortable', isCustom);
+
+		const scroller = itemsContainer.closest('.emby-scroller');
+		const scrollButtons = container.querySelector('.emby-scrollbuttons');
+		const showAllButton = container.querySelector('.show-all-button');
+
+		if (!isCustom) {
+			destroyWatchlistSortable(itemsContainer);
+			itemsContainer.querySelectorAll('.listViewDragHandle').forEach(el => el.remove());
+			itemsContainer.querySelectorAll('.card[data-id]').forEach(card => {
+				card.classList.remove('watchlist-reorder-card', 'watchlist-reorder-card-list');
+				card.removeAttribute('draggable');
+			});
+			itemsContainer.classList.remove('watchlist-custom-sortable-list', 'watchlist-custom-sortable-cards');
+			if (scroller) scroller.classList.remove('watchlist-custom-scroller');
+			if (scrollButtons) scrollButtons.style.display = '';
+			return;
+		}
+
+		applyWatchlistCustomReorderLayout(itemsContainer, layout);
+		if (scroller) {
+			scroller.classList.add('watchlist-custom-scroller');
+			scroller.style.overflow = 'visible';
+			scroller.style.overflowX = 'visible';
+			scroller.style.overflowY = 'visible';
+		}
+		if (scrollButtons) scrollButtons.style.display = 'none';
+		if (layout !== 'List' && showAllButton && showAllButton.textContent.trim() === 'Expand') {
+			showAllButton.textContent = 'Collapse';
+			showAllButton.title = 'Show items in scrollable layout';
+		}
+
+		const isList = layout === 'List';
+		const cards = Array.from(itemsContainer.querySelectorAll('.card[data-id]'));
+		cards.forEach(card => {
+			card.classList.add('watchlist-reorder-card');
+			card.classList.toggle('watchlist-reorder-card-list', isList);
+			card.removeAttribute('draggable');
+
+			if (!card.querySelector('.listViewDragHandle')) {
+				let handle;
+				try {
+					handle = document.createElement('button', { is: 'paper-icon-button-light' });
+				} catch (_) {
+					handle = document.createElement('button');
+				}
+				handle.type = 'button';
+				handle.className = 'listViewDragHandle paper-icon-button-light watchlist-card-drag-handle';
+				handle.title = 'Drag to reorder';
+				handle.setAttribute('aria-label', 'Drag to reorder');
+				handle.tabIndex = -1;
+				handle.innerHTML = '<span class="material-icons drag_handle" aria-hidden="true"></span>';
+				handle.addEventListener('click', (e) => {
+					e.preventDefault();
+					e.stopPropagation();
+				});
+				card.insertBefore(handle, card.firstChild);
+			}
+		});
+
+		const onReorderEnd = () => {
+			if (getCurrentWatchlistSortOrder() !== 'custom') return;
+			commitWatchlistSectionOrderFromDom(container, sectionName);
+		};
+
+		// Reuse existing Sortable instance if already bound to this container
+		if (itemsContainer._kefinWatchlistSortable) {
+			LOG(`Watchlist custom reorder layout refreshed (${sectionName}, ${layout})`);
+			return;
+		}
+
+		destroyWatchlistSortable(itemsContainer);
+		loadWatchlistSortableLibrary().then((Sortable) => {
+			if (!Sortable || typeof Sortable !== 'function') {
+				throw new Error('Sortable constructor unavailable');
+			}
+			if (getCurrentWatchlistSortOrder() !== 'custom') return;
+			if (!container.isConnected || !itemsContainer.isConnected) return;
+
+			if (itemsContainer._kefinWatchlistSortable) {
+				try { itemsContainer._kefinWatchlistSortable.destroy(); } catch (_) { /* ignore */ }
+			}
+
+			itemsContainer._kefinWatchlistSortable = new Sortable(itemsContainer, {
+				draggable: '.watchlist-reorder-card',
+				handle: '.listViewDragHandle',
+				animation: 150,
+				forceFallback: true,
+				fallbackOnBody: true,
+				fallbackTolerance: 3,
+				swapThreshold: 0.65,
+				onStart: () => {
+					document.documentElement.classList.add('watchlist-is-dragging');
+					document.body.classList.add('watchlist-is-dragging');
+					itemsContainer.classList.add('watchlist-drop-target-active');
+				},
+				onEnd: (evt) => {
+					itemsContainer.classList.remove('watchlist-drop-target-active');
+					document.documentElement.classList.remove('watchlist-is-dragging');
+					document.body.classList.remove('watchlist-is-dragging');
+					onReorderEnd(evt);
+				}
+			});
+			LOG(`Watchlist custom reorder enabled via SortableJS (${sectionName}, ${layout})`);
+		}).catch(err => {
+			ERR('Could not enable watchlist drag reorder (Sortable unavailable):', err);
+		});
+	}
+
+	function commitWatchlistSectionOrderFromDom(container, sectionName) {
+		const itemsContainer = container?.querySelector('.itemsContainer');
+		if (!itemsContainer || !watchlistCache[sectionName]) return;
+
+		const visualIds = Array.from(itemsContainer.querySelectorAll(':scope > .card[data-id]'))
+			.map(card => card.getAttribute('data-id'))
+			.filter(Boolean);
+
+		if (visualIds.length === 0) return;
+
+		// Persist order matching visual top→bottom as ascending custom order
+		const descending = getCurrentWatchlistSortDirection() === 'desc';
+		const orderedIds = descending ? [...visualIds].reverse() : visualIds;
+
+		const byId = new Map((watchlistCache[sectionName].data || []).map(item => [item.Id, item]));
+		const map = getLocalWatchlistItemMetaMap();
+		const reordered = [];
+
+		orderedIds.forEach((id, index) => {
+			const item = byId.get(id);
+			if (!item) return;
+			item.WatchlistSortOrder = index;
+			if (!map[id]) map[id] = {};
+			map[id].WatchlistSortOrder = index;
+			if (item.WatchlistDateAdded) map[id].WatchlistDateAdded = item.WatchlistDateAdded;
+			if (item.WatchlistPlayBaseline) map[id].WatchlistPlayBaseline = item.WatchlistPlayBaseline;
+			reordered.push(item);
+			byId.delete(id);
+		});
+
+		// Keep any stragglers not in DOM
+		byId.forEach(item => reordered.push(item));
+
+		watchlistCache[sectionName].data = applyWatchlistSorting(reordered);
+		persistLocalWatchlistItemMetaMap(map);
+		scheduleWatchlistMetaServerSync();
+
+		const optimizedData = optimizeWatchlistDataForStorage(watchlistCache[sectionName].data);
+		localStorageCache.set(
+			`watchlist_${sectionName}`,
+			optimizedData,
+			ApiClient._currentUser?.Id || ApiClient.getCurrentUserId?.(),
+			WATCHLIST_CACHE_TTL
+		);
+
+		LOG(`Saved custom watchlist order for ${sectionName} (${orderedIds.length} items)`);
 	}
 
 	function getTypeDisplayName(itemType) {
@@ -7737,6 +8174,9 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 							icon.classList.remove('view_list');
 						}
 					}
+
+					// Keep custom-sort grab handles working in both Card and List modes
+					refreshWatchlistCustomReorderForLayout();
 					
 					LOG(`Layout switched to: ${newLayout}`);
 				}

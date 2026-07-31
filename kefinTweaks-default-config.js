@@ -74,7 +74,7 @@ window.KefinTweaksDefaultConfig = {
         "name": "Watchlist - Movies",
         "enabled": true,
         "itemLimit": 16,
-        "sortOrder": "DateAdded",
+        "sortOrder": "Custom",
         "sortOrderDirection": "Ascending",
         "cardFormat": "Poster",
         "order": 60
@@ -83,7 +83,7 @@ window.KefinTweaksDefaultConfig = {
         "name": "Watchlist - Shows",
         "enabled": true,
         "itemLimit": 16,
-        "sortOrder": "DateAdded",
+        "sortOrder": "Custom",
         "sortOrderDirection": "Ascending",
         "cardFormat": "Poster",
         "order": 61

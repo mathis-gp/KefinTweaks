@@ -279,7 +279,7 @@
                         enabled: old.enableWatchlist || false,
                         name: 'Watchlist - Movies',
                         itemLimit: 16,
-                        sortOrder: 'DateAdded',
+                        sortOrder: 'Custom',
                         sortOrderDirection: 'Ascending',
                         cardFormat: 'Poster',
                         order: 60
@@ -288,7 +288,7 @@
                         enabled: old.enableWatchlist || false,
                         name: 'Watchlist - Shows',
                         itemLimit: 16,
-                        sortOrder: 'DateAdded',
+                        sortOrder: 'Custom',
                         sortOrderDirection: 'Ascending',
                         cardFormat: 'Poster',
                         order: 61
@@ -850,7 +850,7 @@
             enabled: false,
             name: 'Watchlist - Movies',
             itemLimit: defaultItemLimit,
-            sortOrder: 'DateAdded',
+            sortOrder: 'Custom',
             sortOrderDirection: 'Ascending',
             cardFormat: defaultCardFormat,
             order: 60
@@ -859,7 +859,7 @@
             enabled: false,
             name: 'Watchlist - Shows',
             itemLimit: defaultItemLimit,
-            sortOrder: 'DateAdded',
+            sortOrder: 'Custom',
             sortOrderDirection: 'Ascending',
             cardFormat: defaultCardFormat,
             order: 61
@@ -877,7 +877,7 @@
         if (wl.enabled !== undefined || wl.sortOrder || wl.mediaTypes || wl.name) {
             const shared = {
                 itemLimit: wl.itemLimit ?? defaultItemLimit,
-                sortOrder: wl.sortOrder ?? 'DateAdded',
+                sortOrder: wl.sortOrder ?? 'Custom',
                 sortOrderDirection: wl.sortOrderDirection ?? 'Ascending',
                 cardFormat: wl.cardFormat ?? defaultCardFormat,
                 order: wl.order ?? 60
@@ -2525,7 +2525,7 @@
      * @returns {Array} - Combined watchlist items
      */
     async function getWatchlistData(mediaTypes = 'all') {
-        // Pull cross-client meta from DisplayPreferences before attaching dates
+        // Pull cross-client meta from DisplayPreferences before attaching dates / custom order
         if (window.KefinTweaksWatchlistMeta && typeof window.KefinTweaksWatchlistMeta.ensureFromServer === 'function') {
             try {
                 await window.KefinTweaksWatchlistMeta.ensureFromServer();
@@ -2537,10 +2537,17 @@
         const watchlistData = await window.apiHelper.getWatchlistItems({ IncludeItemTypes: 'Movie,Series,Season,Episode' }, true);
         const items = filterWatchlistByMediaTypes(watchlistData.Items || [], mediaTypes);
         const dateAddedById = getWatchlistDateAddedMap();
+        const metaMap = (window.KefinTweaksWatchlistMeta && typeof window.KefinTweaksWatchlistMeta.getLocalMap === 'function')
+            ? (window.KefinTweaksWatchlistMeta.getLocalMap() || {})
+            : {};
 
         items.forEach(item => {
             if (dateAddedById[item.Id]) {
                 item.WatchlistDateAdded = dateAddedById[item.Id];
+            }
+            const meta = metaMap[item.Id];
+            if (meta && typeof meta.WatchlistSortOrder === 'number') {
+                item.WatchlistSortOrder = meta.WatchlistSortOrder;
             }
         });
 
@@ -2562,6 +2569,39 @@
                 return ascending ? dateA - dateB : dateB - dateA;
             }
             // Stable tiebreaker by name
+            const nameA = (a.Name || '').toLowerCase();
+            const nameB = (b.Name || '').toLowerCase();
+            return ascending ? nameA.localeCompare(nameB) : nameB.localeCompare(nameA);
+        });
+    }
+
+    /**
+     * Sorts watchlist items by user custom order (WatchlistSortOrder)
+     * @param {Array} items
+     * @param {string} sortOrderDirection - Ascending or Descending
+     * @returns {Array}
+     */
+    function sortWatchlistByCustomOrder(items, sortOrderDirection = 'Ascending') {
+        const ascending = sortOrderDirection === 'Ascending';
+        return [...items].sort((a, b) => {
+            const aHas = typeof a.WatchlistSortOrder === 'number';
+            const bHas = typeof b.WatchlistSortOrder === 'number';
+            if (aHas && bHas) {
+                const result = a.WatchlistSortOrder - b.WatchlistSortOrder;
+                if (result !== 0) {
+                    return ascending ? result : -result;
+                }
+            } else if (aHas) {
+                return -1;
+            } else if (bHas) {
+                return 1;
+            } else {
+                const dateA = new Date(a.WatchlistDateAdded || 0);
+                const dateB = new Date(b.WatchlistDateAdded || 0);
+                if (dateA - dateB !== 0) {
+                    return ascending ? dateA - dateB : dateB - dateA;
+                }
+            }
             const nameA = (a.Name || '').toLowerCase();
             const nameB = (b.Name || '').toLowerCase();
             return ascending ? nameA.localeCompare(nameB) : nameB.localeCompare(nameA);
@@ -3219,7 +3259,7 @@
             
             // Get config values from Home Screen settings
             const itemLimit = sectionConfig.itemLimit ?? defaultItemLimit;
-            const sortOrder = sectionConfig.sortOrder ?? 'DateAdded';
+            const sortOrder = sectionConfig.sortOrder ?? 'Custom';
             const sortOrderDirection = sectionConfig.sortOrderDirection ?? 'Ascending';
             const cardFormat = sectionConfig.cardFormat ?? defaultCardFormat;
             const order = sectionConfig.order ?? defaultOrder;
@@ -3231,6 +3271,8 @@
             let sortedItems = watchlistItems;
             if (sortOrder === 'Random') {
                 sortedItems = [...watchlistItems].sort(() => Math.random() - 0.5);
+            } else if (sortOrder === 'Custom') {
+                sortedItems = sortWatchlistByCustomOrder(watchlistItems, sortOrderDirection);
             } else if (sortOrder === 'DateAdded') {
                 // True watchlist add date (WatchlistDateAdded), not library DateCreated
                 sortedItems = sortWatchlistByDateAdded(watchlistItems, sortOrderDirection);

@@ -1950,6 +1950,223 @@ div[data-tab="watchlist"] .loading-message {
     padding-top: .24em;
 }
 
+/* Custom sort — grab works in Card (Default) and List layouts */
+.emby-scroller.watchlist-custom-scroller {
+    overflow: visible !important;
+    overflow-x: visible !important;
+    overflow-y: visible !important;
+}
+
+.emby-scroller.watchlist-custom-scroller .emby-scrollbuttons {
+    display: none !important;
+}
+
+.watchlist-custom-sortable {
+    white-space: normal !important;
+    transform: none !important;
+}
+
+/* Card / grid mode: posters with handle above */
+.watchlist-custom-sortable.watchlist-custom-sortable-cards {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    gap: 12px;
+}
+
+.watchlist-custom-sortable.watchlist-custom-sortable-cards > .watchlist-reorder-card.card {
+    display: flex !important;
+    flex-direction: column;
+    align-items: center;
+    float: none !important;
+    margin-top: 0.25em;
+}
+
+.watchlist-custom-sortable.watchlist-custom-sortable-cards > .watchlist-reorder-card > .listViewDragHandle.watchlist-card-drag-handle {
+    order: -1;
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    width: 2.2em;
+    height: 1.6em;
+    margin: 0 0 0.15em;
+    padding: 0;
+    flex-shrink: 0;
+    cursor: grab;
+    touch-action: none !important;
+    pointer-events: auto !important;
+    z-index: 3;
+    opacity: 0.85;
+    background: transparent;
+    border: none;
+    color: var(--main-text, #fff);
+    -webkit-user-drag: none;
+    user-select: none;
+}
+
+.watchlist-custom-sortable.watchlist-custom-sortable-cards > .watchlist-reorder-card > .cardBox {
+    width: 100%;
+}
+
+/* List mode (voluntary toggle): row layout with handle on the left */
+.watchlist-custom-sortable.watchlist-custom-sortable-list {
+    display: flex !important;
+    flex-direction: column !important;
+    flex-wrap: nowrap !important;
+    gap: 0;
+}
+
+.watchlist-custom-sortable.watchlist-custom-sortable-list > .watchlist-reorder-card.card {
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center;
+    width: 100% !important;
+    float: none !important;
+    margin: 0;
+    padding: 0.35em 0.5em;
+    box-sizing: border-box;
+}
+
+.watchlist-custom-sortable.watchlist-custom-sortable-list > .watchlist-reorder-card > .listViewDragHandle.watchlist-card-drag-handle {
+    order: 0;
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    width: 2.2em;
+    height: 2.2em;
+    margin: 0 0.35em 0 -0.25em;
+    padding: 0;
+    flex-shrink: 0;
+    cursor: grab;
+    touch-action: none !important;
+    pointer-events: auto !important;
+    z-index: 3;
+    opacity: 0.85;
+    background: transparent;
+    border: none;
+    color: var(--main-text, #fff);
+    -webkit-user-drag: none;
+    user-select: none;
+}
+
+.watchlist-custom-sortable.watchlist-custom-sortable-list > .watchlist-reorder-card > .cardBox {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    width: auto !important;
+    margin: 0;
+}
+
+.watchlist-custom-sortable > .watchlist-reorder-card > .listViewDragHandle.watchlist-card-drag-handle:hover,
+.watchlist-custom-sortable > .watchlist-reorder-card > .listViewDragHandle.watchlist-card-drag-handle:focus {
+    opacity: 1;
+}
+
+.watchlist-custom-sortable > .watchlist-reorder-card > .listViewDragHandle.watchlist-card-drag-handle:active {
+    cursor: grabbing !important;
+}
+
+.watchlist-custom-sortable > .watchlist-reorder-card > .listViewDragHandle.watchlist-card-drag-handle .material-icons {
+    pointer-events: none;
+    font-size: 1.35em;
+    line-height: 1;
+}
+
+.watchlist-custom-sortable .sortable-ghost {
+    opacity: 0.35;
+}
+
+/* Sortable forceFallback clones are appended to <body>, so they lose
+   the .watchlist-custom-sortable parent selectors — re-apply card layout */
+/* While dragging: page = not-allowed, active list = grabbing */
+html.watchlist-is-dragging,
+html.watchlist-is-dragging * {
+    cursor: not-allowed !important;
+}
+
+html.watchlist-is-dragging .watchlist-custom-sortable.watchlist-drop-target-active,
+html.watchlist-is-dragging .watchlist-custom-sortable.watchlist-drop-target-active * {
+    cursor: grabbing !important;
+}
+
+/* Dragged clone lives on <body> — keep grabbing on it too */
+html.watchlist-is-dragging .sortable-fallback,
+html.watchlist-is-dragging .sortable-fallback *,
+html.watchlist-is-dragging .sortable-drag,
+html.watchlist-is-dragging .sortable-drag * {
+    cursor: grabbing !important;
+}
+
+.sortable-fallback.watchlist-reorder-card.card,
+.sortable-drag.watchlist-reorder-card.card {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    opacity: 0.95;
+    cursor: grabbing !important;
+    z-index: 10000;
+}
+
+.sortable-fallback.watchlist-reorder-card > .listViewDragHandle.watchlist-card-drag-handle,
+.sortable-drag.watchlist-reorder-card > .listViewDragHandle.watchlist-card-drag-handle {
+    order: -1;
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    align-self: center;
+    width: 2.2em;
+    height: 1.6em;
+    margin: 0 0 0.15em;
+    padding: 0;
+    flex-shrink: 0;
+    opacity: 1;
+    background: transparent;
+    border: none;
+    color: var(--main-text, #fff);
+}
+
+.sortable-fallback.watchlist-reorder-card > .cardBox,
+.sortable-drag.watchlist-reorder-card > .cardBox {
+    width: 100%;
+}
+
+/* List-mode drag clone: same as list rows (no poster image) */
+.sortable-fallback.watchlist-reorder-card.watchlist-reorder-card-list.card,
+.sortable-drag.watchlist-reorder-card.watchlist-reorder-card-list.card {
+    flex-direction: row !important;
+    align-items: center !important;
+    width: auto;
+    min-width: 280px;
+    max-width: min(720px, 90vw);
+}
+
+.sortable-fallback.watchlist-reorder-card.watchlist-reorder-card-list .cardScalable,
+.sortable-drag.watchlist-reorder-card.watchlist-reorder-card-list .cardScalable {
+    display: none !important;
+}
+
+.sortable-fallback.watchlist-reorder-card.watchlist-reorder-card-list .cardText-secondary,
+.sortable-drag.watchlist-reorder-card.watchlist-reorder-card-list .cardText-secondary {
+    display: none !important;
+}
+
+.sortable-fallback.watchlist-reorder-card.watchlist-reorder-card-list > .cardBox,
+.sortable-drag.watchlist-reorder-card.watchlist-reorder-card-list > .cardBox {
+    display: flex !important;
+    flex: 1;
+    min-width: 0;
+    width: auto !important;
+    margin: 0;
+}
+
+.sortable-fallback.watchlist-reorder-card.watchlist-reorder-card-list > .listViewDragHandle.watchlist-card-drag-handle,
+.sortable-drag.watchlist-reorder-card.watchlist-reorder-card-list > .listViewDragHandle.watchlist-card-drag-handle {
+    order: 0;
+    align-self: center;
+    width: 2.2em;
+    height: 2.2em;
+    margin: 0 0.35em 0 -0.25em;
+}
+
 .import-export-tab-content {
     display: flex;
     flex-direction: column;

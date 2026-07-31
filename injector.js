@@ -16,18 +16,21 @@
         if (remoteVersion > localVersion && remoteVersion > 0) {
             console.log('[KefinTweaks] Global reset detected. Clearing user configuration.');
 
-            // Snapshot watchlist meta before wipe so DateAdded / PlayBaseline can be re-applied
+            // Snapshot watchlist meta before wipe so DateAdded / PlayBaseline / SortOrder can be re-applied
             // when the watchlist cache is rebuilt after reset
             const preservedWatchlistMeta = {};
             const mergePreservedItem = (id, item) => {
                 if (!id || !item) return;
-                if (!item.WatchlistDateAdded && !item.WatchlistPlayBaseline) return;
+                if (!item.WatchlistDateAdded && !item.WatchlistPlayBaseline && typeof item.WatchlistSortOrder !== 'number') return;
                 if (!preservedWatchlistMeta[id]) preservedWatchlistMeta[id] = {};
                 if (item.WatchlistDateAdded) {
                     preservedWatchlistMeta[id].WatchlistDateAdded = item.WatchlistDateAdded;
                 }
                 if (item.WatchlistPlayBaseline) {
                     preservedWatchlistMeta[id].WatchlistPlayBaseline = item.WatchlistPlayBaseline;
+                }
+                if (typeof item.WatchlistSortOrder === 'number') {
+                    preservedWatchlistMeta[id].WatchlistSortOrder = item.WatchlistSortOrder;
                 }
             };
 
@@ -42,7 +45,7 @@
                                 if (item && item.Id) mergePreservedItem(item.Id, item);
                             });
                         } else if (payload && typeof payload === 'object') {
-                            // Dedicated meta map: { [itemId]: { WatchlistDateAdded, WatchlistPlayBaseline } }
+                            // Dedicated meta map: { [itemId]: { WatchlistDateAdded, WatchlistPlayBaseline, WatchlistSortOrder } }
                             Object.keys(payload).forEach(id => mergePreservedItem(id, payload[id]));
                         }
                     } catch (_) {
