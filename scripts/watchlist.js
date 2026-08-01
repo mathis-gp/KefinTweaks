@@ -2647,7 +2647,10 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 			const preservedMeta = options.preservedMeta || collectWatchlistMetaById();
 
 			// Fetch watchlist data
-			const watchlistData = await window.apiHelper.getWatchlistItems({ IncludeItemTypes: SUPPORTED_WATCHLIST_ITEM_TYPES.join(',') });
+			const watchlistData = await window.apiHelper.getWatchlistItems({
+				IncludeItemTypes: SUPPORTED_WATCHLIST_ITEM_TYPES.join(','),
+				Fields: 'RunTimeTicks,ProductionYear,PremiereDate,ProviderIds,SeriesName,ParentId,SeriesPrimaryImageTag,PrimaryImageAspectRatio'
+			});
 			const applyMeta = (item) => applyWatchlistMeta(item, preservedMeta);
 
 			watchlistCache.movies.data = watchlistData.Items.filter(item => item.Type === 'Movie').map(applyMeta);

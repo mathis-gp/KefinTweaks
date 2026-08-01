@@ -16,6 +16,23 @@
         }
         return arr;
     }
+
+    /**
+     * Format RunTimeTicks as "2h 29m" / "45m"
+     * @param {number} runTimeTicks
+     * @returns {string}
+     */
+    function formatRuntime(runTimeTicks) {
+        if (!runTimeTicks) return '';
+        const runtimeMinutes = Math.round(runTimeTicks / 10000000 / 60);
+        if (runtimeMinutes <= 0) return '';
+        const hours = Math.floor(runtimeMinutes / 60);
+        const minutes = runtimeMinutes % 60;
+        if (hours > 0) {
+            return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
+        }
+        return `${minutes}m`;
+    }
     
     /**
      * Sorts items based on sort order and direction
@@ -555,12 +572,6 @@
             titleBdi.appendChild(titleLink);
             cardTextContainer.appendChild(titleBdi);
 
-            // Secondary text (year)
-            const secondaryText = document.createElement('div');
-            secondaryText.className = 'cardText cardTextCentered cardText-secondary';
-            const yearBdi = document.createElement('bdi');
-            yearBdi.textContent = item.ProductionYear || item.PremiereDate?.substring(0, 4) || '';
-            secondaryText.appendChild(yearBdi);
         }
 
         // Assemble card
@@ -607,9 +618,26 @@
         } else {
             const secondaryText = document.createElement('div');
             secondaryText.className = 'cardText cardTextCentered cardText-secondary';
-            const yearBdi = document.createElement('bdi');
-            yearBdi.textContent = item.ProductionYear || item.PremiereDate?.substring(0, 4) || '';
-            secondaryText.appendChild(yearBdi);
+
+            const year = item.ProductionYear || item.PremiereDate?.substring(0, 4) || '';
+            if (year) {
+                const yearBdi = document.createElement('bdi');
+                yearBdi.textContent = year;
+                secondaryText.appendChild(yearBdi);
+            }
+
+            const runtime = (item.Type === 'Movie' || item.Type === 'Video')
+                ? formatRuntime(item.RunTimeTicks)
+                : '';
+            if (runtime) {
+                if (year) {
+                    secondaryText.appendChild(document.createTextNode(' · '));
+                }
+                const runtimeBdi = document.createElement('bdi');
+                runtimeBdi.textContent = runtime;
+                secondaryText.appendChild(runtimeBdi);
+            }
+
             cardBox.appendChild(secondaryText);
         }
         
