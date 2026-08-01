@@ -349,7 +349,7 @@
      * invalidateWatchlistQueries so cache clear hits the same URL as fetch.
      */
     const WATCHLIST_PROGRESSIVE_FIELDS =
-        'PrimaryImageAspectRatio,DateCreated,ProductionYear,PremiereDate,ProviderIds,UserData';
+        'PrimaryImageAspectRatio,DateCreated,ProductionYear,PremiereDate,ProviderIds,UserData,RunTimeTicks';
 
     /**
      * Build a single top-level Likes query def (shared by getWatchlistItems / getWatchlistQuery).

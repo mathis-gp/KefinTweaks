@@ -77,6 +77,16 @@
         return arr;
     }
 
+    function formatRuntime(runTimeTicks) {
+        if (!runTimeTicks) return '';
+        const runtimeMinutes = Math.round(runTimeTicks / 10000000 / 60);
+        if (runtimeMinutes <= 0) return '';
+        const hours = Math.floor(runtimeMinutes / 60);
+        const minutes = runtimeMinutes % 60;
+        if (hours > 0) return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
+        return `${minutes}m`;
+    }
+
     /** Element.replaceChildren polyfill (missing in JMP Qt5 WebEngine / Chromium ~83). */
     function replaceChildren(node, ...nodes) {
         if (!node) return;
@@ -5316,6 +5326,15 @@
                 const yearBdi = document.createElement('bdi');
                 yearBdi.textContent = secondaryTextContent || item.CustomFooterText;
                 secondaryText.appendChild(yearBdi);
+                if (item.Type === 'Movie' || item.Type === 'Video') {
+                    const runtime = formatRuntime(item.RunTimeTicks);
+                    if (runtime) {
+                        if (secondaryTextContent) secondaryText.appendChild(document.createTextNode(' · '));
+                        const runtimeBdi = document.createElement('bdi');
+                        runtimeBdi.textContent = runtime;
+                        secondaryText.appendChild(runtimeBdi);
+                    }
+                }
                 cardTextFragment.appendChild(secondaryText);
             }
 
