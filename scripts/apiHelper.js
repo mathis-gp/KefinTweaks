@@ -751,78 +751,74 @@
         },
 
         getWatchlistItems: async function(options = {}, useCache = false) {
-            const query = buildWatchlistQueryDef(options);
-            const data = await this.getItems({ ...query.queryOptions }, useCache);
-            const items = Array.isArray(data?.Items) ? data.Items : (Array.isArray(data) ? data : []);
+            ensureApiClient();
+
+            if (window.KefinTweaksWatchlistMeta?.ensureFromServer) {
+                try {
+                    await window.KefinTweaksWatchlistMeta.ensureFromServer();
+                } catch (err) {
+                    WARN('Watchlist meta ensure failed before fetch:', err);
+                }
+            }
+
+            const meta = window.KefinTweaksWatchlistMeta?.getLocalMap?.() || {};
+            const allIds = Object.keys(meta);
+            if (allIds.length === 0) {
+                return { Items: [], TotalRecordCount: 0 };
+            }
+
+            const includeTypes = options.IncludeItemTypes
+                ? String(options.IncludeItemTypes).split(',').map(s => s.trim()).filter(Boolean)
+                : null;
+            const { IncludeItemTypes, Filters, ParentId, Recursive, ...rest } = options;
+            const CHUNK_SIZE = 80;
+            let watchlistItems = [];
+
+            for (let i = 0; i < allIds.length; i += CHUNK_SIZE) {
+                const chunk = allIds.slice(i, i + CHUNK_SIZE);
+                const data = await this.getItems({
+                    ImageTypeLimit: 1,
+                    EnableImageTypes: 'Primary,Backdrop,Thumb',
+                    EnableTotalRecordCount: false,
+                    Fields: WATCHLIST_PROGRESSIVE_FIELDS,
+                    ...rest,
+                    Ids: chunk.join(','),
+                    Recursive: false
+                }, useCache);
+                watchlistItems.push(...(data.Items || []));
+            }
+
+            watchlistItems = watchlistItems.filter((item, index, self) =>
+                index === self.findIndex((t) => t.Id === item.Id)
+            );
+            if (includeTypes && includeTypes.length > 0) {
+                watchlistItems = watchlistItems.filter(item => includeTypes.includes(item.Type));
+            }
 
             return {
-                Items: items,
-                TotalRecordCount: data?.TotalRecordCount ?? items.length
+                Items: watchlistItems,
+                TotalRecordCount: watchlistItems.length
             };
         },
 
         /**
-         * Progressive watchlist query (single top-level Likes getQuery).
-         * @param {Object} options - Same shape as getWatchlistItems (IncludeItemTypes, Fields, ...)
-         * @param {Object} [cacheOptions]
-         * @param {number} [cacheOptions.ttl=300000]
-         * @param {boolean} [cacheOptions.forceRefresh=false]
-         * @returns {Promise<Object>} Progressive result: { data, isStale, isStalePromise, ensureData, dataPromise, urls }
+         * Watchlist query backed by DisplayPreferences item ids (not UserData.Likes).
          */
         getWatchlistQuery: async function(options = {}, cacheOptions = {}) {
-            ensureApiClient();
-
-            let ttl = 300000;
-            if (Number(cacheOptions.ttl) >= 0) {
-                ttl = Number(cacheOptions.ttl);
-            }
-            const forceRefresh = !!cacheOptions.forceRefresh;
-            const userId = ApiClient.getCurrentUserId();
-            const serverUrl = ApiClient.serverAddress();
-            const query = buildWatchlistQueryDef(options);
-            const url = this.buildQueryFromSection(query, userId, serverUrl);
-            if (typeof url !== 'string') {
-                throw new Error('Invalid watchlist query URL');
-            }
-
-            const queryResult = this.getQuery(url, {
-                useCache: true,
-                ttl,
-                forceRefresh
-            });
-
-            const normalize = (data) => {
-                const items = Array.isArray(data?.Items) ? data.Items : (Array.isArray(data) ? data : []);
-                return { Items: items, TotalRecordCount: data?.TotalRecordCount ?? items.length };
+            const data = await this.getWatchlistItems(options, !cacheOptions.forceRefresh);
+            const normalized = {
+                Items: data.Items || [],
+                TotalRecordCount: data.TotalRecordCount || 0
             };
-
-            let mappedDataPromise = null;
-            const ensureData = () => {
-                if (!mappedDataPromise) {
-                    const raw = typeof queryResult.ensureData === 'function'
-                        ? queryResult.ensureData()
-                        : queryResult.dataPromise;
-                    mappedDataPromise = Promise.resolve(raw).then(normalize);
-                }
-                return mappedDataPromise;
-            };
-
-            const result = {
-                data: { Items: [] },
-                isStale: true,
-                isStalePromise: queryResult.isStalePromise || Promise.resolve(false),
+            const ensureData = () => Promise.resolve(normalized);
+            return {
+                data: normalized,
+                isStale: false,
+                isStalePromise: Promise.resolve(false),
                 ensureData,
-                urls: [url]
+                dataPromise: ensureData(),
+                urls: []
             };
-            Object.defineProperty(result, 'dataPromise', {
-                configurable: true,
-                enumerable: true,
-                get() {
-                    return ensureData();
-                }
-            });
-
-            return result;
         },
 
         /**

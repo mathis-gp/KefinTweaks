@@ -3373,6 +3373,11 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 		return !!itemId && watchlistLikedIds.has(itemId);
 	}
 
+	function isItemInWatchlist(itemId) {
+		if (!itemId) return false;
+		return Object.prototype.hasOwnProperty.call(readWatchlistItemMetaMap(), itemId);
+	}
+
 	function setLikedIdInCache(itemId, isLiked) {
 		if (!itemId) return;
 		if (isLiked) watchlistLikedIds.add(itemId);
@@ -3397,7 +3402,7 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 	function syncOverlayWatchlistButtons() {
 		document.querySelectorAll('.watchlist-button[data-id]').forEach((button) => {
 			const itemId = button.getAttribute('data-id');
-			applyWatchlistButtonActiveState(button, isItemInLikedIdCache(itemId));
+			applyWatchlistButtonActiveState(button, isItemInWatchlist(itemId));
 		});
 	}
 
@@ -3895,9 +3900,8 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 			order,
 			ttl: WATCHLIST_CACHE_TTL,
 			userConfigurable: false,
-			queries: [{
+				queries: [{
 				queryOptions: {
-					Filters: 'Likes',
 					IncludeItemTypes: itemType,
 					Recursive: true,
 					ImageTypeLimit: 1,
@@ -5534,23 +5538,16 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 
 		// Get all current watchlist items to check for duplicates
 		const currentWatchlist = new Set();
-		const watchlistTypes = ['Movie', 'Series', 'Season', 'Episode'];
-		for (const type of watchlistTypes) {
-			try {
-				const url = `${serverUrl}/Items?Filters=Likes&IncludeItemTypes=${type}&UserId=${userId}&Recursive=true&Fields=ProviderIds`;
-				const res = await fetch(url, { headers: { "Authorization": window.apiHelper.getAuthHeader() } });
-				const watchlistData = await res.json();
-				const items = watchlistData.Items || [];
-				for (const item of items) {
-					if (item.ProviderIds) {
-						if (item.ProviderIds.Imdb) currentWatchlist.add(`Imdb:${item.ProviderIds.Imdb}:${type}`);
-						if (item.ProviderIds.Tmdb) currentWatchlist.add(`Tmdb:${item.ProviderIds.Tmdb}:${type}`);
-						if (item.ProviderIds.Tvdb) currentWatchlist.add(`Tvdb:${item.ProviderIds.Tvdb}:${type}`);
-					}
-				}
-			} catch (err) {
-				WARN(`Failed to fetch current watchlist for ${type}:`, err);
-			}
+		const currentData = await window.apiHelper.getWatchlistItems({
+			IncludeItemTypes: 'Movie,Series,Season,Episode',
+			Fields: 'ProviderIds'
+		}, false);
+		for (const item of currentData.Items || []) {
+			if (!item.ProviderIds) continue;
+			const type = item.Type;
+			if (item.ProviderIds.Imdb) currentWatchlist.add(`Imdb:${item.ProviderIds.Imdb}:${type}`);
+			if (item.ProviderIds.Tmdb) currentWatchlist.add(`Tmdb:${item.ProviderIds.Tmdb}:${type}`);
+			if (item.ProviderIds.Tvdb) currentWatchlist.add(`Tvdb:${item.ProviderIds.Tvdb}:${type}`);
 		}
 
 		// Process each import item
@@ -5609,7 +5606,7 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 				}
 
 				// Add to watchlist
-				await apiClient.updateUserItemRating(userId, foundItem.Id, 'true');
+				await updateWatchlistCacheOnToggle(foundItem.Id, foundItem.Type, true);
 				results.imported++;
 
 				// Update current watchlist set
@@ -5635,49 +5632,12 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 
 	// Clear entire watchlist
 	async function clearWatchlist() {
-		const apiClient = window.ApiClient;
-		const userId = apiClient.getCurrentUserId();
-		const serverUrl = apiClient.serverAddress();
-		const token = apiClient.accessToken();
-
-		const types = ['Movie', 'Series', 'Season', 'Episode'];
-		let cleared = 0;
-
-		for (const type of types) {
-			try {
-				const data = await window.apiHelper.getItems({
-					Filters: 'Likes',
-					IncludeItemTypes: type,
-					Recursive: true,
-					Fields: 'Id'
-				}, false);
-				const items = data.Items || [];
-
-				for (const item of items) {
-					try {
-						await apiClient.updateUserItemRating(userId, item.Id, 'false');
-						cleared++;
-					} catch (err) {
-						ERR(`Failed to remove item ${item.Id}:`, err);
-					}
-				}
-			} catch (err) {
-				ERR(`Failed to fetch ${type} items for clearing:`, err);
-			}
-		}
-
-		// Clear query cache + in-memory index
+		const cleared = Object.keys(readWatchlistItemMetaMap()).length;
+		clearWatchlistItemMeta();
 		await invalidateAllWatchlistQueries();
 		resetWatchlistItemsByType();
-		watchlistLikedIds.clear();
-		watchlistLikedIdsLoaded = true;
-		writeLikedIdsToStorage();
-		clearWatchlistItemMeta();
 		syncOverlayWatchlistButtons();
-
-		// Refresh watchlist
 		await initWatchlistTab(true);
-
 		alert(`Watchlist cleared: ${cleared} item(s) removed.`);
 	}
 
@@ -5760,37 +5720,8 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 	 * Idempotent for the Set when cardBuilder already applied Likes; always invalidate
 	 * so a remote/Library like is visible on the next Watchlist visit.
 	 */
-	async function handleItemWatchlistChange(itemId, isLiked, itemType) {
-		if (!itemId || typeof isLiked !== 'boolean') return;
-
-		if (isItemInLikedIdCache(itemId) !== isLiked) {
-			setLikedIdInCache(itemId, isLiked);
-		}
-		if (isLiked) {
-			if (!getWatchlistItemMeta(itemId)?.WatchlistPlayBaseline) {
-				try {
-					const likedItem = await ApiClient.getItem(ApiClient.getCurrentUserId(), itemId);
-					recordWatchlistMetaOnAdd(itemId, likedItem?.UserData || {});
-				} catch (err) {
-					recordWatchlistMetaOnAdd(itemId, {});
-				}
-			}
-		} else {
-			removeWatchlistItemMeta(itemId);
-		}
-		// Keep header counts aligned even if liked-Id Set was already updated by cardBuilder
-		patchWatchlistItemsByTypeMembership(itemId, itemType, isLiked);
-
-		try {
-			if (itemType && isWatchlistSupportedType(itemType)) {
-				await window.apiHelper?.invalidateWatchlistQueries?.({ IncludeItemTypes: itemType });
-			} else {
-				await invalidateAllWatchlistQueries();
-			}
-			tabStates.watchlist.isDataFetched = false;
-		} catch (err) {
-			ERR('Error invalidating watchlist after Likes change:', err);
-		}
+	async function handleItemWatchlistChange() {
+		// Watchlist membership lives in DisplayPreferences meta, not UserData.Likes.
 	}
 
 	// Initialize monitoring to remove watched items from watchlist (playback + manual)
@@ -5872,7 +5803,7 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 			
 			if (isPlayed) {
 				const currentUserData = item.UserData || {};
-				const inWatchlist = isWatchlisted === true || isItemInLikedIdCache(itemId);
+				const inWatchlist = isItemInWatchlist(itemId);
 				if (inWatchlist && shouldRemoveFromWatchlistAfterPlay(itemId, currentUserData)) {
 					LOG('Item was (re)watched past its watchlist baseline, removing:', item.Name);
 					await removeItemFromWatchlist(itemId, item.Type);
@@ -6170,13 +6101,7 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 
 	// Remove item from watchlist (API + cache + UI)
 	async function removeItemFromWatchlist(itemId, itemType) {
-		// Remove from watchlist via API
-		await ApiClient.updateUserItemRating(ApiClient.getCurrentUserId(), itemId, 'false');
-		
-		// Remove from cache
 		await updateWatchlistCacheOnToggle(itemId, itemType, false);
-		
-		// Update watchlist button on item detail page if user is viewing this item
 		await updateWatchlistButtonOnDetailPage();
 	}
 
@@ -6282,7 +6207,7 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 			}
 			
 			// Update button based on current watchlist status
-			const isInWatchlist = item.UserData.Likes ?? false;
+			const isInWatchlist = isItemInWatchlist(currentItemId);
 			watchlistButton.setAttribute('data-active', isInWatchlist.toString());
 			watchlistButton.title = isInWatchlist ? 'Remove from Watchlist' : 'Add to Watchlist';
 			
@@ -6294,25 +6219,7 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 
 	// Check if an item is in the user's watchlist via in-memory index or API
 	async function checkIfItemInWatchlist(itemId) {
-		try {
-			for (const { type } of WATCHLIST_SECTION_TYPES) {
-				if ((watchlistItemsByType[type] || []).some(item => item.Id === itemId)) {
-					return true;
-				}
-			}
-
-			const item = await ApiClient.getItem(ApiClient.getCurrentUserId(), itemId);
-			if (item && item.UserData && item.UserData.Likes) {
-				LOG(`Item ${itemId} is in watchlist (via API check)`);
-				return true;
-			}
-
-			LOG(`Item ${itemId} is not in watchlist (via API check)`);
-			return false;
-		} catch (err) {
-			ERR('Error checking if item is in watchlist:', err);
-			return false;
-		}
+		return isItemInWatchlist(itemId);
 	}
 
 	async function fetchWatchedMovies(useCache = true) {
@@ -8462,9 +8369,7 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 			e.preventDefault();
 			e.stopPropagation();
 
-			const newRating = button.dataset.active === 'false' ? 'true' : 'false';
-			await ApiClient.updateUserItemRating(ApiClient.getCurrentUserId(), itemId, newRating);
-			const isActive = newRating === 'true';
+			const isActive = button.dataset.active === 'false';
 			applyWatchlistButtonActiveState(button, isActive);
 			await updateWatchlistCacheOnToggle(itemId, itemType, isActive);
 		});
@@ -8560,9 +8465,8 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 			watchlistButton.setAttribute('data-id', itemId);
 		}
 
-		// Prefer liked-Id cache once loaded; until then keep cardBuilder UserData.Likes state
 		if (watchlistLikedIdsLoaded || createdNew) {
-			applyWatchlistButtonActiveState(watchlistButton, isItemInLikedIdCache(itemId));
+			applyWatchlistButtonActiveState(watchlistButton, isItemInWatchlist(itemId));
 		}
 
 		bindWatchlistButton(watchlistButton, itemId, itemType);
@@ -8672,7 +8576,9 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 	window.KefinTweaksWatchlistMeta = {
 		ensureFromServer: ensureWatchlistMetaFromServer,
 		getLocalMap: readWatchlistItemMetaMap,
-		scheduleSync: scheduleWatchlistMetaServerSync
+		scheduleSync: scheduleWatchlistMetaServerSync,
+		isInWatchlist: isItemInWatchlist,
+		updateCacheOnToggle: updateWatchlistCacheOnToggle
 	};
 	ensureWatchlistMetaFromServer().catch(err => {
 		WARN('Initial watchlist meta sync failed:', err);
@@ -8716,14 +8622,9 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 			|| window.location.href.substring(window.location.href.indexOf('id=') + 3, window.location.href.indexOf('id=') + 35);
 
 		watchlistIcon.addEventListener('click', async () => {
-			const newRating = watchlistIcon.dataset.active === 'false' ? 'true' : 'false';
-			await ApiClient.updateUserItemRating(ApiClient.getCurrentUserId(), itemId, newRating);
-			watchlistIcon.dataset.active = newRating;
-
-			const isActive = watchlistIcon.dataset.active === 'true';
-			watchlistIcon.title = isActive ? 'Remove from Watchlist' : 'Add to Watchlist';
-
-			const toggledItem = await ApiClient.getItem(ApiClient.getCurrentUserId(), itemId);
+			const isActive = watchlistIcon.dataset.active !== 'true';
+			applyWatchlistButtonActiveState(watchlistIcon, isActive);
+			const toggledItem = item || await ApiClient.getItem(ApiClient.getCurrentUserId(), itemId);
 			if (toggledItem) {
 				await updateWatchlistCacheOnToggle(itemId, toggledItem.Type, isActive);
 			}
@@ -8737,7 +8638,7 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 				watchlistIcon.style.display = 'none';
 				return;
 			}
-			if (resolvedItem.UserData && resolvedItem.UserData.Likes) {
+			if (isItemInWatchlist(resolvedItem.Id)) {
 				watchlistIcon.dataset.active = 'true';
 				watchlistIcon.title = 'Remove from Watchlist';
 			}
@@ -8851,18 +8752,11 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 			e.stopPropagation();
 
 			// Toggle watchlist status
-			const newRating = watchlistButton.dataset.active === 'false' ? 'true' : 'false';
-			await ApiClient.updateUserItemRating(ApiClient.getCurrentUserId(), itemId, newRating);
-			watchlistButton.dataset.active = newRating;
-
-			// Update title based on state
-			const isActive = watchlistButton.dataset.active === 'true';
-			watchlistButton.title = isActive ? 'Remove from Watchlist' : 'Add to Watchlist';
-
-			// Update watchlist cache immediately
-			const item = await ApiClient.getItem(ApiClient.getCurrentUserId(), itemId);
-			if (item) {
-				await updateWatchlistCacheOnToggle(itemId, item.Type, isActive);
+			const isActive = watchlistButton.dataset.active !== 'true';
+			applyWatchlistButtonActiveState(watchlistButton, isActive);
+			const toggledItem = await ApiClient.getItem(ApiClient.getCurrentUserId(), itemId);
+			if (toggledItem) {
+				await updateWatchlistCacheOnToggle(itemId, toggledItem.Type, isActive);
 			}
 		});
 
@@ -8875,7 +8769,7 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 			}
 
 			// Set initial state based on current watchlist status
-			if (item.UserData && item.UserData.Likes) {
+			if (isItemInWatchlist(itemId)) {
 				watchlistButton.dataset.active = 'true';
 				watchlistButton.title = 'Remove from Watchlist';
 			}

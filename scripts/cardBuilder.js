@@ -2546,21 +2546,15 @@
         return cards;
     }
 
-    function updateCardWatchlistButtons(itemId, userData) {
-        if (!state.watchlist) return;
-        if (!itemId || !userData || !('Likes' in userData)) return;
-
-        const isLiked = userData.Likes === true;
-        const likedHelper = window.KefinWatchlistLikedIds;
-        if (likedHelper?.set) {
-            likedHelper.set(itemId, isLiked);
-        }
+    function updateCardWatchlistButtons(itemId) {
+        if (!state.watchlist || !itemId) return;
+        const isInWatchlist = !!window.KefinTweaksWatchlistMeta?.isInWatchlist?.(itemId);
 
         itemIdDomVariants(itemId).forEach((variant) => {
             const escapedId = escapeCssIdentForCardSync(variant);
             document.querySelectorAll(`.watchlist-button[data-id="${escapedId}"]`).forEach((button) => {
-                button.dataset.active = isLiked ? 'true' : 'false';
-                button.title = isLiked ? 'Remove from Watchlist' : 'Add to Watchlist';
+                button.dataset.active = isInWatchlist ? 'true' : 'false';
+                button.title = isInWatchlist ? 'Remove from Watchlist' : 'Add to Watchlist';
             });
         });
     }
@@ -5011,15 +5005,15 @@
 
             const watchlistSupportedTypes = ['Movie', 'Series', 'Season', 'Episode', 'BoxSet', 'Playlist', 'Video'];
             if (state.watchlist && watchlistSupportedTypes.includes(itemType)) {
-                const isLiked = item.UserData?.Likes === true;
+                const isInWatchlist = !!window.KefinTweaksWatchlistMeta?.isInWatchlist?.(itemId);
                 const watchlistButton = document.createElement('button');
                 watchlistButton.type = 'button';
                 watchlistButton.className =
                     'watchlist-button cardOverlayButton cardOverlayButton-hover itemAction paper-icon-button-light emby-button button-flat';
                 watchlistButton.setAttribute('data-action', 'none');
                 watchlistButton.setAttribute('data-id', itemId);
-                watchlistButton.setAttribute('data-active', isLiked ? 'true' : 'false');
-                watchlistButton.title = isLiked ? 'Remove from Watchlist' : 'Add to Watchlist';
+                watchlistButton.setAttribute('data-active', isInWatchlist ? 'true' : 'false');
+                watchlistButton.title = isInWatchlist ? 'Remove from Watchlist' : 'Add to Watchlist';
 
                 const watchlistIcon = document.createElement('span');
                 watchlistIcon.className = 'material-icons cardOverlayButtonIcon cardOverlayButtonIcon-hover watchlist';
@@ -6636,15 +6630,15 @@
             const spotlightWatchlistSupportedTypes = ['Movie', 'Series', 'Season', 'Episode', 'BoxSet', 'Playlist', 'Video'];
             let watchlistButton = null;
             if (state.watchlist && spotlightWatchlistSupportedTypes.includes(itemType)) {
-                const isLiked = item.UserData?.Likes === true;
+                const isInWatchlist = !!window.KefinTweaksWatchlistMeta?.isInWatchlist?.(item.Id);
                 watchlistButton = document.createElement('button');
                 watchlistButton.type = 'button';
                 watchlistButton.className = 'watchlist-button spotlight-watchlist-button emby-button button-flat paper-icon-button-light';
                 if (isTvLayout()) watchlistButton.classList.add('show-focus');
                 watchlistButton.setAttribute('data-action', 'none');
                 watchlistButton.setAttribute('data-id', item.Id);
-                watchlistButton.setAttribute('data-active', isLiked ? 'true' : 'false');
-                watchlistButton.title = isLiked ? 'Remove from Watchlist' : 'Add to Watchlist';
+                watchlistButton.setAttribute('data-active', isInWatchlist ? 'true' : 'false');
+                watchlistButton.title = isInWatchlist ? 'Remove from Watchlist' : 'Add to Watchlist';
 
                 const watchlistIcon = document.createElement('span');
                 watchlistIcon.className = 'material-icons watchlist';
