@@ -1101,16 +1101,18 @@
             const watchlistButton = document.createElement('button');
             watchlistButton.className = 'spotlight-watchlist-button emby-button';
             
-            // Check watchlist status - try to get from cache or API
+            // Check watchlist status from meta / cache (not UserData.Likes)
             let isInWatchlist = false;
-            const sectionName = itemType === 'Movie' ? 'movies' : 
-                               itemType === 'Series' ? 'series' : 
-                               itemType === 'Season' ? 'seasons' : 
-                               itemType === 'Episode' ? 'episodes' : null;
-            
-            // Check watchlist cache if available
-            if (sectionName && typeof window.watchlistCache !== 'undefined' && window.watchlistCache[sectionName]?.data) {
-                isInWatchlist = window.watchlistCache[sectionName].data.some(watchlistItem => watchlistItem.Id === item.Id);
+            if (window.KefinTweaksWatchlistMeta && typeof window.KefinTweaksWatchlistMeta.isInWatchlist === 'function') {
+                isInWatchlist = !!window.KefinTweaksWatchlistMeta.isInWatchlist(item.Id);
+            } else if (typeof window.watchlistCache !== 'undefined') {
+                const sectionName = itemType === 'Movie' ? 'movies' : 
+                                   itemType === 'Series' ? 'series' : 
+                                   itemType === 'Season' ? 'seasons' : 
+                                   itemType === 'Episode' ? 'episodes' : null;
+                if (sectionName && window.watchlistCache[sectionName]?.data) {
+                    isInWatchlist = window.watchlistCache[sectionName].data.some(watchlistItem => watchlistItem.Id === item.Id);
+                }
             }
             
             const watchlistIcon = document.createElement('span');
@@ -1122,26 +1124,24 @@
             }
             watchlistButton.addEventListener('click', async (e) => {
                 e.stopPropagation();
-                const userId = ApiClient.getCurrentUserId();
                 const newStatus = !isInWatchlist;
                 
                 try {
-                    // Update watchlist status using proper API
-                    await ApiClient.updateUserItemRating(userId, item.Id, newStatus ? 'true' : 'false');
+                    // Meta membership only — never write UserData.Rating / Likes
+                    if (window.KefinTweaksWatchlistMeta && typeof window.KefinTweaksWatchlistMeta.updateCacheOnToggle === 'function') {
+                        await window.KefinTweaksWatchlistMeta.updateCacheOnToggle(item.Id, itemType, newStatus);
+                    } else if (typeof window.updateWatchlistCacheOnToggle === 'function') {
+                        await window.updateWatchlistCacheOnToggle(item.Id, itemType, newStatus);
+                    } else {
+                        throw new Error('Watchlist meta API unavailable');
+                    }
                     
-                    // Update local state
                     isInWatchlist = newStatus;
                     
-                    // Update button class
                     if (isInWatchlist) {
                         watchlistButton.classList.add('watchlisted');
                     } else {
                         watchlistButton.classList.remove('watchlisted');
-                    }
-                    
-                    // Update watchlist cache if available
-                    if (sectionName && typeof window.updateWatchlistCacheOnToggle === 'function') {
-                        await window.updateWatchlistCacheOnToggle(item.Id, itemType, isInWatchlist);
                     }
                 } catch (err) {
                     console.error('Failed to update watchlist status:', err);

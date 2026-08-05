@@ -4756,24 +4756,31 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 			}
 		}
 
-		// Get all current watchlist items to check for duplicates
+		// Get all current watchlist items to check for duplicates (meta = membership)
+		await ensureWatchlistMetaFromServer().catch(() => {});
 		const currentWatchlist = new Set();
-		const watchlistTypes = ['Movie', 'Series', 'Season', 'Episode'];
-		for (const type of watchlistTypes) {
+		const metaMap = getLocalWatchlistItemMetaMap();
+		const metaIds = Object.keys(metaMap);
+		if (metaIds.length > 0) {
 			try {
-				const url = `${serverUrl}/Items?Filters=Likes&IncludeItemTypes=${type}&UserId=${userId}&Recursive=true&Fields=ProviderIds`;
-				const res = await fetch(url, { headers: { "Authorization": `MediaBrowser Token=\"${token}\"` } });
-				const watchlistData = await res.json();
-				const items = watchlistData.Items || [];
-				for (const item of items) {
-					if (item.ProviderIds) {
+				const CHUNK = 80;
+				for (let i = 0; i < metaIds.length; i += CHUNK) {
+					const chunk = metaIds.slice(i, i + CHUNK);
+					const data = await ApiClient.getItems(userId, {
+						Ids: chunk.join(','),
+						Fields: 'ProviderIds',
+						EnableTotalRecordCount: false
+					});
+					for (const item of (data.Items || [])) {
+						if (!item.ProviderIds) continue;
+						const type = item.Type;
 						if (item.ProviderIds.Imdb) currentWatchlist.add(`Imdb:${item.ProviderIds.Imdb}:${type}`);
 						if (item.ProviderIds.Tmdb) currentWatchlist.add(`Tmdb:${item.ProviderIds.Tmdb}:${type}`);
 						if (item.ProviderIds.Tvdb) currentWatchlist.add(`Tvdb:${item.ProviderIds.Tvdb}:${type}`);
 					}
 				}
 			} catch (err) {
-				WARN(`Failed to fetch current watchlist for ${type}:`, err);
+				WARN('Failed to fetch current watchlist for import dedupe:', err);
 			}
 		}
 
@@ -4816,12 +4823,14 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 					continue;
 				}
 
-				// Check if already in watchlist
-				let alreadyInWatchlist = false;
-				for (const key of searchKeys) {
-					if (currentWatchlist.has(key)) {
-						alreadyInWatchlist = true;
-						break;
+		// Check if already in watchlist (meta membership)
+				let alreadyInWatchlist = isItemInWatchlist(foundItem.Id);
+				if (!alreadyInWatchlist) {
+					for (const key of searchKeys) {
+						if (currentWatchlist.has(key)) {
+							alreadyInWatchlist = true;
+							break;
+						}
 					}
 				}
 
@@ -4832,8 +4841,8 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 					continue;
 				}
 
-				// Add to watchlist
-				await apiClient.updateUserItemRating(userId, foundItem.Id, 'true');
+				// Add to watchlist via meta (do not touch UserData.Rating / Likes)
+				await updateWatchlistCacheOnToggle(foundItem.Id, foundItem.Type, true);
 				results.imported++;
 
 				// Update current watchlist set
@@ -4857,35 +4866,14 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 		return results;
 	}
 
-	// Clear entire watchlist
+	// Clear entire watchlist (meta membership only — never touches UserData.Rating)
 	async function clearWatchlist() {
-		const apiClient = window.ApiClient;
-		const userId = apiClient.getCurrentUserId();
-		const serverUrl = apiClient.serverAddress();
-		const token = apiClient.accessToken();
+		await ensureWatchlistMetaFromServer().catch(() => {});
+		const map = getLocalWatchlistItemMetaMap();
+		const cleared = Object.keys(map).length;
 
-		const types = ['Movie', 'Series', 'Season', 'Episode'];
-		let cleared = 0;
-
-		for (const type of types) {
-			try {
-				const url = `${serverUrl}/Items?Filters=Likes&IncludeItemTypes=${type}&UserId=${userId}&Recursive=true&Fields=Id`;
-				const res = await fetch(url, { headers: { "Authorization": `MediaBrowser Token=\"${token}\"` } });
-				const data = await res.json();
-				const items = data.Items || [];
-
-				for (const item of items) {
-					try {
-						await apiClient.updateUserItemRating(userId, item.Id, 'false');
-						cleared++;
-					} catch (err) {
-						ERR(`Failed to remove item ${item.Id}:`, err);
-					}
-				}
-			} catch (err) {
-				ERR(`Failed to fetch ${type} items for clearing:`, err);
-			}
-		}
+		persistLocalWatchlistItemMetaMap({});
+		await saveWatchlistMetaToServer({});
 
 		// Clear cache
 		const sections = ['movies', 'series', 'seasons', 'episodes'];
@@ -5077,6 +5065,28 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 				WARN('Debounced watchlist meta sync failed:', err);
 			});
 		}, 750);
+	}
+
+	/**
+	 * Membership = key present in meta map (not UserData.Likes).
+	 * Likes is derived from Rating (>= 6.5) and collides with rating plugins.
+	 */
+	function isItemInWatchlist(itemId) {
+		if (!itemId) return false;
+		const map = getLocalWatchlistItemMetaMap();
+		if (map && Object.prototype.hasOwnProperty.call(map, itemId)) {
+			return true;
+		}
+		for (const section of WATCHLIST_META_SECTIONS) {
+			if ((watchlistCache[section]?.data || []).some(item => item.Id === itemId)) {
+				return true;
+			}
+			const cached = localStorageCache.get(`watchlist_${section}`);
+			if (Array.isArray(cached) && cached.some(item => item.Id === itemId)) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	async function ensureWatchlistMetaFromServer() {
@@ -5474,9 +5484,10 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 						if (data.MessageType === 'UserDataChanged' && data.Data && data.Data.UserDataList && data.Data.UserDataList.length > 0) {
 							const userData = data.Data.UserDataList[0];
 							if (userData.ItemId) {
-								LOG(`Detected UserDataChanged for item: ${userData.ItemId}, Played: ${userData.Played}, PlayCount: ${userData.PlayCount}, Likes: ${userData.Likes}`);
-								// Handle the watched status change (works for both played and unplayed)
-								handleItemWatchedStatusChange(userData.ItemId, userData.Played, userData.Likes, userData).catch(err => {
+								LOG(`Detected UserDataChanged for item: ${userData.ItemId}, Played: ${userData.Played}, PlayCount: ${userData.PlayCount}`);
+								// Membership from meta — ignore Likes (derived from Rating)
+								const watchlisted = isItemInWatchlist(userData.ItemId);
+								handleItemWatchedStatusChange(userData.ItemId, userData.Played, watchlisted, userData).catch(err => {
 									ERR('Error handling UserDataChanged event:', err);
 								});
 							}
@@ -5870,12 +5881,8 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 		}
 	}
 
-	// Remove item from watchlist (API + cache + UI)
+	// Remove item from watchlist (meta + cache + UI — never touches Rating)
 	async function removeItemFromWatchlist(itemId, itemType) {
-		// Remove from watchlist via API
-		await ApiClient.updateUserItemRating(ApiClient.getCurrentUserId(), itemId, 'false');
-		
-		// Remove from cache
 		await updateWatchlistCacheOnToggle(itemId, itemType, false);
 		
 		// Update watchlist button on item detail page if user is viewing this item
@@ -5992,15 +5999,8 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 				return;
 			}
 			
-			// Fetch current item data to get watchlist status
-			const item = await ApiClient.getItem(ApiClient.getCurrentUserId(), currentItemId);
-			if (!item || !item.UserData) {
-				LOG('Could not fetch item data, skipping watchlist button update');
-				return;
-			}
-			
-			// Update button based on current watchlist status
-			const isInWatchlist = item.UserData.Likes ?? false;
+			// Update button based on meta membership (not UserData.Likes)
+			const isInWatchlist = isItemInWatchlist(currentItemId);
 			watchlistButton.setAttribute('data-active', isInWatchlist.toString());
 			watchlistButton.title = isInWatchlist ? 'Remove from Watchlist' : 'Add to Watchlist';
 			
@@ -6010,28 +6010,17 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 		}
 	}
 
-	// Check if an item is in the user's watchlist via API
+	// Check if an item is in the user's watchlist (meta / cache)
 	async function checkIfItemInWatchlist(itemId) {
 		try {
-			// First check if we have the item in our cache (faster)
-			const sections = ['movies', 'series', 'seasons', 'episodes'];
-			for (const section of sections) {
-				if (watchlistCache[section].data.some(item => item.Id === itemId)) {
-					return true;
-				}
-			}
-			
-			// If not in cache, check via API
-			const item = await ApiClient.getItem(ApiClient.getCurrentUserId(), itemId);
-			if (item && item.UserData && item.UserData.Likes) {
-				LOG(`Item ${itemId} is in watchlist (via API check)`);
+			if (isItemInWatchlist(itemId)) {
 				return true;
 			}
-			
-			LOG(`Item ${itemId} is not in watchlist (via API check)`);
-			return false;
+
+			await ensureWatchlistMetaFromServer().catch(() => {});
+			return isItemInWatchlist(itemId);
 		} catch (err) {
-			ERR('Error checking if item is in watchlist:', err);
+			ERR('Error checking watchlist status:', err);
 			return false;
 		}
 	}
@@ -8445,14 +8434,10 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 			e.preventDefault();
 			e.stopPropagation();
 			
-			// Toggle watchlist status
-			const newRating = watchlistButton.dataset.active === 'false' ? 'true' : 'false';
-			const isActive = newRating === 'true';
+			// Toggle watchlist status (meta only — do not touch UserData.Rating)
+			const isActive = watchlistButton.dataset.active !== 'true';
 
-			await ApiClient.updateUserItemRating(ApiClient.getCurrentUserId(), itemId, newRating);
-			watchlistButton.dataset.active = newRating;
-			
-			// Update icon and title based on state
+			watchlistButton.dataset.active = isActive ? 'true' : 'false';
 			watchlistButton.title = isActive ? 'Remove from Watchlist' : 'Add to Watchlist';
 			
 			// Update watchlist cache immediately (stores DateAdded + PlayBaseline on the item)
@@ -8469,35 +8454,10 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 			return;
 		}
 		
-		// Check item's current watchlist status from cache only (no server fetch)
-		// Map itemType to section name
-		let sectionName;
-		sectionName = watchlistCacheTypeMap[itemType];
-		if (!sectionName) {
-			LOG('Unknown item type for cache update:', itemType);
-			return;
-		}
-		
-		if (sectionName) {
-			// First check in-memory cache
-			let isInWatchlist = false;
-			if (watchlistCache[sectionName] && watchlistCache[sectionName].data) {
-				isInWatchlist = watchlistCache[sectionName].data.some(item => item.Id === itemId);
-			}
-			
-			// If not in memory cache, check localStorage cache
-			if (!isInWatchlist) {
-				const cachedData = localStorageCache.get(`watchlist_${sectionName}`);
-				if (cachedData && Array.isArray(cachedData)) {
-					isInWatchlist = cachedData.some(item => item.Id === itemId);
-				}
-			}
-			
-			// Set button state if item is in watchlist
-			if (isInWatchlist) {
-				watchlistButton.dataset.active = 'true';
-				watchlistButton.title = 'Remove from Watchlist';
-			}
+		// Check item's current watchlist status from meta / cache
+		if (isItemInWatchlist(itemId)) {
+			watchlistButton.dataset.active = 'true';
+			watchlistButton.title = 'Remove from Watchlist';
 		}
 		
 		// Add the watchlist button to the button container, right before the play state button if it exists
@@ -8605,39 +8565,36 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 		const itemId = window.location.href.substring(window.location.href.indexOf("id=") + 3, window.location.href.indexOf("id=") + 35);
 		
 		watchlistIcon.addEventListener('click', async () => {
-			const newRating = watchlistIcon.dataset.active === 'false' ? 'true' : 'false';
-			const isActive = newRating === 'true';
+			const isActive = watchlistIcon.dataset.active !== 'true';
 
-			await ApiClient.updateUserItemRating(ApiClient.getCurrentUserId(), itemId, newRating);
-			watchlistIcon.dataset.active = newRating;
+			watchlistIcon.dataset.active = isActive ? 'true' : 'false';
 			watchlistIcon.title = isActive ? 'Remove from Watchlist' : 'Add to Watchlist';
 			
-			// Update watchlist cache immediately (stores DateAdded + PlayBaseline on the item)
+			// Update watchlist cache immediately (meta membership — no Rating write)
 			const itemData = await ApiClient.getItem(ApiClient.getCurrentUserId(), itemId);
 			if (itemData) {
 				await updateWatchlistCacheOnToggle(itemId, itemData.Type, isActive);
 			}
 		});	
 		
-		if (item) {
-			// Set initial state based on current watchlist status
-			if (item.UserData && item.UserData.Likes) {
+		const applyWatchlistState = (targetItem) => {
+			if (!targetItem) return;
+			if (isItemInWatchlist(targetItem.Id || itemId)) {
 				watchlistIcon.dataset.active = 'true';
 				watchlistIcon.title = 'Remove from Watchlist';
 			}
+		};
+
+		if (item) {
+			applyWatchlistState(item);
 		} else {
 			// Get item data to check if it should be shown and current state
-			ApiClient.getItem(ApiClient.getCurrentUserId(), itemId).then((item) => {
+			ApiClient.getItem(ApiClient.getCurrentUserId(), itemId).then((fetched) => {
 				// Only show for Movies, Series, Seasons, and Episodes
-				if (item.Type !== "Movie" && item.Type !== "Series" && item.Type !== "Season" && item.Type !== "Episode") {
+				if (fetched.Type !== "Movie" && fetched.Type !== "Series" && fetched.Type !== "Season" && fetched.Type !== "Episode") {
 					watchlistIcon.style.display = "none";
 				}
-				
-				// Set initial state based on current watchlist status
-				if (item.UserData && item.UserData.Likes) {
-					watchlistIcon.dataset.active = 'true';
-					watchlistIcon.title = 'Remove from Watchlist';
-				}
+				applyWatchlistState(fetched);
 			}).catch(err => {
 				ERR('Error fetching item data:', err);
 			});
@@ -8740,15 +8697,11 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 			e.preventDefault();
 			e.stopPropagation();
 
-			// Toggle watchlist status
-			const newRating = watchlistButton.dataset.active === 'false' ? 'true' : 'false';
-			const isActive = newRating === 'true';
+			const isActive = watchlistButton.dataset.active !== 'true';
 
-			await ApiClient.updateUserItemRating(ApiClient.getCurrentUserId(), itemId, newRating);
-			watchlistButton.dataset.active = newRating;
+			watchlistButton.dataset.active = isActive ? 'true' : 'false';
 			watchlistButton.title = isActive ? 'Remove from Watchlist' : 'Add to Watchlist';
 
-			// Update watchlist cache immediately (stores DateAdded + PlayBaseline on the item)
 			const itemData = await ApiClient.getItem(ApiClient.getCurrentUserId(), itemId);
 			if (itemData) {
 				await updateWatchlistCacheOnToggle(itemId, itemData.Type, isActive);
@@ -8763,8 +8716,7 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 				return;
 			}
 
-			// Set initial state based on current watchlist status
-			if (item.UserData && item.UserData.Likes) {
+			if (isItemInWatchlist(item.Id)) {
 				watchlistButton.dataset.active = 'true';
 				watchlistButton.title = 'Remove from Watchlist';
 			}
@@ -9130,8 +9082,11 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 	// Cross-client meta API for homeScreen (and early preload before watchlist tab opens)
 	window.KefinTweaksWatchlistMeta = {
 		ensureFromServer: ensureWatchlistMetaFromServer,
-		getLocalMap: getLocalWatchlistItemMetaMap
+		getLocalMap: getLocalWatchlistItemMetaMap,
+		isInWatchlist: isItemInWatchlist,
+		updateCacheOnToggle: updateWatchlistCacheOnToggle
 	};
+	window.updateWatchlistCacheOnToggle = updateWatchlistCacheOnToggle;
 
 	(function preloadWatchlistMetaWhenReady() {
 		const tryLoad = () => {

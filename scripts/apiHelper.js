@@ -303,47 +303,58 @@
             }
         },
 
+        /**
+         * Watchlist membership is stored in DisplayPreferences meta (kefinTweaksWatchlistMeta),
+         * not UserData.Likes — Likes is derived from Rating (>= 6.5) and conflicts with rating plugins.
+         */
         getWatchlistItems: async function(options = {}, useCache = false) {
-            // First fetch the Library Items that contain items of the supported types from ApiClient.getJSON(ApiClient.getUrl("Library/MediaFolders"))
-            const libraryItems = await ApiClient.getItems();
-            
-            // We now want to include the library items with ColletionType "tvshows", or "movies"
-            const supportedCollectionTypes = ['tvshows', 'movies', 'homevideos', 'boxsets', 'playlists'];
-            const supportedLibraryItems = libraryItems.Items.filter(item => supportedCollectionTypes.includes(item.CollectionType) || !item.CollectionType);
+            ensureApiClient();
 
-            // Now use these support library items as the parent ids for the Items query, since the Items endpoint doesn't support ParentIds as an array we need to make a different call for each library. Querying with the parent id will dramatically reduce the time for the request to return so this is fine
-            let watchlistItems = [];
-            for (const libraryItem of supportedLibraryItems.reverse()) {
-                // Get the item types to include based on the library type. if its a Movies library only use the Movie type. If it's tvshows then use Series, Season and Episode
-                let itemTypes = options.IncludeItemTypes.split(',');
-                if (itemTypes.length > 1) { 
-                    if (libraryItem.CollectionType === 'movies') {
-                        itemTypes = options.IncludeItemTypes.split(',').filter(item => item === 'Movie');
-                    } else if (libraryItem.CollectionType === 'tvshows') {
-                        itemTypes = options.IncludeItemTypes.split(',').filter(item => item === 'Series' || item === 'Season' || item === 'Episode');
-                    }
+            if (window.KefinTweaksWatchlistMeta && typeof window.KefinTweaksWatchlistMeta.ensureFromServer === 'function') {
+                try {
+                    await window.KefinTweaksWatchlistMeta.ensureFromServer();
+                } catch (err) {
+                    WARN('Watchlist meta ensure failed before fetch:', err);
                 }
-                
-                // Use getItems to fetch the items for the library item
-                const data = await this.getItems({
-                    ParentId: libraryItem.Id,
-                    Filters: 'Likes',
-                    IncludeItemTypes: itemTypes.join(','),
-                    Recursive: true,
-                    ImageTypeLimit: 1,
-                    EnableImageTypes: 'Primary,Backdrop,Thumb',
-                    ...options
-                }, useCache);
-
-                //const url = `${ApiClient.serverAddress()}/Items?Filters=Likes&IncludeItemTypes=${type}&UserId=${ApiClient.getCurrentUserId()}&Recursive=true&ImageTypeLimit=1&EnableImageTypes=Primary,Backdrop,Thumb&ParentId=${libraryItem.Id}`;
-                //const data = await this.getData(url, useCache);
-                watchlistItems.push(...data.Items);
             }
 
-            // Deuplicate any duplicate Id's in the watchlistItems array
+            const meta = (window.KefinTweaksWatchlistMeta && typeof window.KefinTweaksWatchlistMeta.getLocalMap === 'function')
+                ? (window.KefinTweaksWatchlistMeta.getLocalMap() || {})
+                : {};
+            const allIds = Object.keys(meta);
+            if (allIds.length === 0) {
+                return { Items: [], TotalRecordCount: 0 };
+            }
+
+            const includeTypes = options.IncludeItemTypes
+                ? String(options.IncludeItemTypes).split(',').map(s => s.trim()).filter(Boolean)
+                : null;
+
+            // Strip membership/parent filters — IDs are the source of truth
+            const { IncludeItemTypes, Filters, ParentId, Recursive, ...rest } = options;
+            const CHUNK_SIZE = 80;
+            let watchlistItems = [];
+
+            for (let i = 0; i < allIds.length; i += CHUNK_SIZE) {
+                const chunk = allIds.slice(i, i + CHUNK_SIZE);
+                const data = await this.getItems({
+                    ImageTypeLimit: 1,
+                    EnableImageTypes: 'Primary,Backdrop,Thumb',
+                    EnableTotalRecordCount: false,
+                    ...rest,
+                    Ids: chunk.join(','),
+                    Recursive: false
+                }, useCache);
+                watchlistItems.push(...(data.Items || []));
+            }
+
             watchlistItems = watchlistItems.filter((item, index, self) =>
                 index === self.findIndex((t) => t.Id === item.Id)
             );
+
+            if (includeTypes && includeTypes.length > 0) {
+                watchlistItems = watchlistItems.filter(item => includeTypes.includes(item.Type));
+            }
 
             return {
                 Items: watchlistItems,
