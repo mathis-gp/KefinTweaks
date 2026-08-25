@@ -2032,6 +2032,11 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 			label: 'Release Date',
 			defaultDirection: 'desc',
 			sortFn: (a, b, direction) => sortWatchlistByReleaseDate(a, b, direction)
+		},
+		duration: {
+			label: 'Duration',
+			defaultDirection: 'desc',
+			sortFn: (a, b, direction) => sortWatchlistByDuration(a, b, direction)
 		}
 	};
 
@@ -2320,6 +2325,18 @@ In the Custom Tabs plugin, add a new tab with the following HTML content:
 		const dateA = new Date(a.PremiereDate || a.ProductionYear || 0);
 		const dateB = new Date(b.PremiereDate || b.ProductionYear || 0);
 		const result = dateA - dateB;
+		return direction === 'asc' ? result : -result;
+	}
+
+	function sortWatchlistByDuration(a, b, direction = 'desc') {
+		const runtimeA = a.RunTimeTicks ? Math.floor(a.RunTimeTicks / 10000000) : 0;
+		const runtimeB = b.RunTimeTicks ? Math.floor(b.RunTimeTicks / 10000000) : 0;
+		if (runtimeA === 0 && runtimeB === 0) {
+			return (a.Name || '').localeCompare(b.Name || '');
+		}
+		if (runtimeA === 0) return 1;
+		if (runtimeB === 0) return -1;
+		const result = runtimeA - runtimeB;
 		return direction === 'asc' ? result : -result;
 	}
 
