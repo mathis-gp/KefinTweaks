@@ -1845,10 +1845,13 @@ window.KefinTweaksConfig = ${JSON.stringify(configToBackup, null, 2)};`;
             
             if (overrideGroup) {
                 // Merge sections within the group
-                const mergedSections = mergeSectionsInGroup(
+                let mergedSections = mergeSectionsInGroup(
                     defaultGroup.sections || [],
                     overrideGroup.sections || []
                 );
+                if (defaultGroup.id === 'home-watchlist') {
+                    mergedSections = mergedSections.filter((section) => section?.id !== 'watchlist');
+                }
                 
                 merged.push({
                     ...defaultGroup,

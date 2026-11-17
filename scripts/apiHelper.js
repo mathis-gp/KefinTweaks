@@ -801,9 +801,14 @@
             };
         },
 
+        isWatchlistHomeSection: function(sectionConfig) {
+            const id = sectionConfig?.id;
+            return id === 'watchlist' || id === 'watchlist-movies' || id === 'watchlist-shows';
+        },
+
         /**
-         * Home "watchlist" section: membership from DisplayPreferences meta, custom order.
-         * Ignores the section query Filters/SortBy (upstream default is Likes + DateCreated).
+         * Home watchlist sections: membership from DisplayPreferences meta, custom order.
+         * movies / shows split uses IncludeItemTypes on the section query.
          */
         getWatchlistHomeSectionItems: async function(sectionConfig) {
             const queryOptions = sectionConfig?.queries?.[0]?.queryOptions || {};

@@ -701,9 +701,9 @@
 			name: "Watchlist",
 			sections: [
 				{
-					id: "watchlist",
+					id: "watchlist-movies",
 					type: "home",
-					name: "Watchlist",
+					name: "Watchlist - Movies",
 					enabled: true,
 					order: 71,
 					cardFormat: "Poster",
@@ -712,8 +712,26 @@
 					queries: [
 						{
 							queryOptions: {
-								IncludeItemTypes: ["Movie", "Series", "Season", "Episode"],
-								Limit: 20,
+								IncludeItemTypes: ["Movie"],
+								Limit: 16,
+							},
+						},
+					],
+				},
+				{
+					id: "watchlist-shows",
+					type: "home",
+					name: "Watchlist - Shows",
+					enabled: true,
+					order: 72,
+					cardFormat: "Poster",
+					ttl: CACHE_CONFIG.FORCE_REFRESH_TTL,
+					userConfigurable: true,
+					queries: [
+						{
+							queryOptions: {
+								IncludeItemTypes: ["Series", "Season", "Episode"],
+								Limit: 16,
 							},
 						},
 					],

@@ -425,7 +425,7 @@
                         return [];
                     }
 
-                    if (sectionConfig.id === 'watchlist' && window.apiHelper?.getWatchlistHomeSectionItems) {
+                    if (window.apiHelper?.isWatchlistHomeSection?.(sectionConfig) && window.apiHelper?.getWatchlistHomeSectionItems) {
                         const items = await window.apiHelper.getWatchlistHomeSectionItems(sectionConfig);
                         return applyExcludeItemIdFilter(sectionConfig, items);
                     }
@@ -625,7 +625,7 @@
             return `#/list.html?type=nextup&serverId=${ApiClient.serverId()}`;
         }
 
-        if (id === 'watchlist') {
+        if (id === 'watchlist' || id === 'watchlist-movies' || id === 'watchlist-shows') {
             return await getWatchlistUrl();
         }
 

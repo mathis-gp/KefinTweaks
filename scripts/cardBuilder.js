@@ -1495,7 +1495,7 @@
         const userId = ApiClient.getCurrentUserId();
         const serverUrl = ApiClient.serverAddress();
         const ApiHelper = window.apiHelper;
-        if (sectionConfig.id === 'watchlist' && ApiHelper?.getWatchlistHomeSectionItems) {
+        if (ApiHelper?.isWatchlistHomeSection?.(sectionConfig) && ApiHelper?.getWatchlistHomeSectionItems) {
             return {
                 items: [],
                 canPaintCached: false,
@@ -1618,7 +1618,7 @@
         const userId = ApiClient.getCurrentUserId();
         const serverUrl = ApiClient.serverAddress();
         const ApiHelper = window.apiHelper;
-        if (sectionConfig.id === 'watchlist' && ApiHelper?.getWatchlistHomeSectionItems) {
+        if (ApiHelper?.isWatchlistHomeSection?.(sectionConfig) && ApiHelper?.getWatchlistHomeSectionItems) {
             return ApiHelper.getWatchlistHomeSectionItems(sectionConfig);
         }
         const results = [];
