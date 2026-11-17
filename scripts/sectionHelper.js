@@ -425,6 +425,11 @@
                         return [];
                     }
 
+                    if (sectionConfig.id === 'watchlist' && window.apiHelper?.getWatchlistHomeSectionItems) {
+                        const items = await window.apiHelper.getWatchlistHomeSectionItems(sectionConfig);
+                        return applyExcludeItemIdFilter(sectionConfig, items);
+                    }
+
                     const results = [];
                     for (const query of queriesToLoad) {
                         let queryResult;

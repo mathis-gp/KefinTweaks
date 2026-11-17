@@ -802,6 +802,66 @@
         },
 
         /**
+         * Home "watchlist" section: membership from DisplayPreferences meta, custom order.
+         * Ignores the section query Filters/SortBy (upstream default is Likes + DateCreated).
+         */
+        getWatchlistHomeSectionItems: async function(sectionConfig) {
+            const queryOptions = sectionConfig?.queries?.[0]?.queryOptions || {};
+            const include = queryOptions.IncludeItemTypes;
+            const fetchOptions = {};
+            if (include) {
+                fetchOptions.IncludeItemTypes = Array.isArray(include) ? include.join(',') : String(include);
+            }
+
+            const data = await this.getWatchlistItems(fetchOptions, false);
+            const meta = window.KefinTweaksWatchlistMeta?.getLocalMap?.() || {};
+            let items = [...(data.Items || [])];
+
+            items.forEach((item) => {
+                const entry = meta[item?.Id];
+                if (!entry) return;
+                if (typeof entry.WatchlistSortOrder === 'number') item.WatchlistSortOrder = entry.WatchlistSortOrder;
+                if (entry.WatchlistDateAdded) item.WatchlistDateAdded = entry.WatchlistDateAdded;
+            });
+
+            items.sort((a, b) => {
+                const aHas = typeof a.WatchlistSortOrder === 'number';
+                const bHas = typeof b.WatchlistSortOrder === 'number';
+                if (aHas && bHas && a.WatchlistSortOrder !== b.WatchlistSortOrder) {
+                    return a.WatchlistSortOrder - b.WatchlistSortOrder;
+                }
+                if (aHas !== bHas) return aHas ? -1 : 1;
+                const dateA = new Date(a.WatchlistDateAdded || 0);
+                const dateB = new Date(b.WatchlistDateAdded || 0);
+                if (dateA - dateB !== 0) return dateA - dateB;
+                return (a.Name || '').localeCompare(b.Name || '');
+            });
+
+            const limit = Number(queryOptions.Limit);
+            if (limit > 0) items = items.slice(0, limit);
+
+            if (window.cardBuilder?.postProcessItems) {
+                const unsortedConfig = {
+                    ...sectionConfig,
+                    sortBy: '',
+                    queries: (sectionConfig.queries || []).map((query) => ({
+                        ...query,
+                        queryOptions: {
+                            ...(query.queryOptions || {}),
+                            SortBy: undefined,
+                            SortOrder: undefined,
+                            Filters: undefined,
+                            Limit: 0
+                        }
+                    }))
+                };
+                items = window.cardBuilder.postProcessItems(unsortedConfig, items);
+            }
+
+            return items;
+        },
+
+        /**
          * Watchlist query backed by DisplayPreferences item ids (not UserData.Likes).
          */
         getWatchlistQuery: async function(options = {}, cacheOptions = {}) {

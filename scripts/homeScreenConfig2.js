@@ -712,9 +712,7 @@
 					queries: [
 						{
 							queryOptions: {
-								Filters: "Likes",
-								SortBy: "DateCreated",
-								SortOrder: "Descending",
+								IncludeItemTypes: ["Movie", "Series", "Season", "Episode"],
 								Limit: 20,
 							},
 						},

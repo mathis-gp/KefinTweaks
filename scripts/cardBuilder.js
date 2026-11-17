@@ -1495,6 +1495,13 @@
         const userId = ApiClient.getCurrentUserId();
         const serverUrl = ApiClient.serverAddress();
         const ApiHelper = window.apiHelper;
+        if (sectionConfig.id === 'watchlist' && ApiHelper?.getWatchlistHomeSectionItems) {
+            return {
+                items: [],
+                canPaintCached: false,
+                itemsPromise: ApiHelper.getWatchlistHomeSectionItems(sectionConfig)
+            };
+        }
         const results = [];
         const queriesToLoad = resolveQueriesToLoad(sectionConfig, { initialize: false });
         const sectionTtl = resolveSectionQueryTtl(sectionConfig);
@@ -1611,6 +1618,9 @@
         const userId = ApiClient.getCurrentUserId();
         const serverUrl = ApiClient.serverAddress();
         const ApiHelper = window.apiHelper;
+        if (sectionConfig.id === 'watchlist' && ApiHelper?.getWatchlistHomeSectionItems) {
+            return ApiHelper.getWatchlistHomeSectionItems(sectionConfig);
+        }
         const results = [];
         const queriesToLoad = resolveQueriesToLoad(sectionConfig, { initialize: false });
 
